@@ -300,37 +300,19 @@ function PreviewPanel({ file, onClose }) {
 
 function fmtTok(n) { return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n) }
 
-function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onPreviewFile, previewFileName }) {
+function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError }) {
   const ref = useRef(null)
-  const [sessionFiles, setSessionFiles]   = useState([])
-  const [fetching, setFetching]           = useState(false)
-  const [fetched, setFetched]             = useState(false)
   const [sessionUsage, setSessionUsage]   = useState(null)
   const [usageFetched, setUsageFetched]   = useState(false)
-  const [buildingPbip, setBuildingPbip]   = useState(false)
-  const [pbipError, setPbipError]         = useState(null)
 
   useEffect(() => {
     gsap.from(ref.current, { x: -16, opacity: 0, duration: 0.55, ease: 'power3.out' })
   }, [])
 
-  // Reset file/usage state when active session changes
+  // Reset usage state when active session changes
   useEffect(() => {
-    setSessionFiles([])
-    setFetched(false)
     setSessionUsage(null)
     setUsageFetched(false)
-  }, [activeSessionId])
-
-  const fetchSessionFiles = useCallback(async () => {
-    setFetching(true)
-    try {
-      const res  = await fetch(`/api/session-files?sessionId=${activeSessionId}`)
-      const data = await res.json()
-      setSessionFiles(data.files ?? [])
-      setFetched(true)
-    } catch {}
-    setFetching(false)
   }, [activeSessionId])
 
   const fetchUsage = useCallback(async () => {
@@ -341,45 +323,6 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
       setUsageFetched(true)
     } catch {}
   }, [activeSessionId])
-
-  useEffect(() => {
-    if (isIdle && hasMessages && !fetched) fetchSessionFiles()
-  }, [isIdle, hasMessages, fetched, fetchSessionFiles])
-
-  const buildPbip = useCallback(async () => {
-    const specFile  = sessionFiles.find(f => f.name === 'dashboard_spec.json')
-    const modelFile = sessionFiles.find(f => f.name === 'semantic_model.json')
-    if (!specFile || !modelFile) return
-    setBuildingPbip(true)
-    setPbipError(null)
-    try {
-      const buildId = Date.now().toString(36)
-      const res = await fetch(
-        (process.env.NEXT_PUBLIC_BICOHOST_URL ?? '') + '/api/build',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            dashboard_spec: JSON.parse(specFile.content),
-            semantic_model: JSON.parse(modelFile.content),
-            build_id: buildId,
-          }),
-        }
-      )
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err.error ?? `HTTP ${res.status}`)
-      }
-      const blob = await res.blob()
-      const url  = URL.createObjectURL(blob)
-      const a    = document.createElement('a')
-      a.href = url; a.download = `pages_${buildId}.zip`; a.click()
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      setPbipError(e.message)
-    }
-    setBuildingPbip(false)
-  }, [sessionFiles])
 
   useEffect(() => {
     if (isIdle && hasMessages) fetchUsage()
@@ -473,7 +416,7 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
             </div>
             {hasMessages && (
               <button
-                onClick={fetchSessionFiles}
+                onClick={onFetchFiles}
                 disabled={fetching}
                 className="font-mono text-[8px] tracking-wider uppercase text-muted/70 hover:text-red transition-colors disabled:opacity-40"
               >
@@ -533,7 +476,7 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
              sessionFiles.some(f => f.name === 'semantic_model.json') && (
               <div className="mt-3 pt-3 border-t border-border/30">
                 <button
-                  onClick={buildPbip}
+                  onClick={onBuildPbip}
                   disabled={buildingPbip}
                   className="w-full font-mono text-[9px] tracking-wider uppercase px-3 py-2 bg-red text-paper rounded hover:bg-red/80 disabled:opacity-40 transition-colors"
                 >
@@ -619,6 +562,11 @@ export default function ChatInterface() {
   const [sessions, setSessions]             = useState([])
   const [creatingSession, setCreatingSession] = useState(false)
   const [previewFile, setPreviewFile]       = useState(null)
+  const [sessionFiles, setSessionFiles]     = useState([])
+  const [fetching, setFetching]             = useState(false)
+  const [fetched, setFetched]               = useState(false)
+  const [buildingPbip, setBuildingPbip]     = useState(false)
+  const [pbipError, setPbipError]           = useState(null)
 
   const bottomRef    = useRef(null)
   const bodyRef      = useRef(null)
@@ -697,6 +645,64 @@ export default function ChatInterface() {
     }
     setCreatingSession(false)
   }, [creatingSession])
+
+  const fetchSessionFiles = useCallback(async () => {
+    setFetching(true)
+    try {
+      const res  = await fetch(`/api/session-files?sessionId=${activeSessionIdRef.current}`)
+      const data = await res.json()
+      setSessionFiles(data.files ?? [])
+      setFetched(true)
+    } catch {}
+    setFetching(false)
+  }, [])
+
+  const buildPbip = useCallback(async () => {
+    const specFile  = sessionFiles.find(f => f.name === 'dashboard_spec.json')
+    const modelFile = sessionFiles.find(f => f.name === 'semantic_model.json')
+    if (!specFile || !modelFile) return
+    setBuildingPbip(true)
+    setPbipError(null)
+    try {
+      const buildId = Date.now().toString(36)
+      const res = await fetch(
+        (process.env.NEXT_PUBLIC_BICOHOST_URL ?? '') + '/api/build',
+        {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dashboard_spec: JSON.parse(specFile.content),
+            semantic_model: JSON.parse(modelFile.content),
+            build_id: buildId,
+          }),
+        }
+      )
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error ?? `HTTP ${res.status}`)
+      }
+      const blob = await res.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href = url; a.download = `pages_${buildId}.zip`; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setPbipError(e.message)
+    }
+    setBuildingPbip(false)
+  }, [sessionFiles])
+
+  // Reset file state on session switch
+  useEffect(() => {
+    setSessionFiles([])
+    setFetched(false)
+    setPbipError(null)
+  }, [activeSessionId])
+
+  // Auto-fetch files when agent goes idle after a conversation
+  useEffect(() => {
+    if (agentStatus === 'idle' && messages.length > 0 && !fetched) fetchSessionFiles()
+  }, [agentStatus, messages.length, fetched, fetchSessionFiles])
 
   useEffect(() => {
     const ctx = gsap.context(() => {
@@ -858,6 +864,13 @@ export default function ChatInterface() {
         creatingSession={creatingSession}
         onPreviewFile={setPreviewFile}
         previewFileName={previewFile?.name}
+        sessionFiles={sessionFiles}
+        onFetchFiles={fetchSessionFiles}
+        fetching={fetching}
+        fetched={fetched}
+        buildingPbip={buildingPbip}
+        onBuildPbip={buildPbip}
+        pbipError={pbipError}
       />
 
       {/* ── MAIN ─────────────────────────────────────────────────────── */}
@@ -897,6 +910,33 @@ export default function ChatInterface() {
             <div ref={bottomRef} />
           </div>
         </div>
+
+        {/* Build PBIP action bar — shown when IR files are ready */}
+        {isIdle && !isSetup &&
+         sessionFiles.some(f => f.name === 'dashboard_spec.json') &&
+         sessionFiles.some(f => f.name === 'semantic_model.json') && (
+          <div className="flex-shrink-0 px-6 pb-2">
+            <div className="max-w-2xl mx-auto">
+              <div className="flex items-center justify-between gap-4 bg-ink/[0.04] border border-ink/12 rounded-xl px-4 py-2.5">
+                <div className="min-w-0">
+                  <p className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted leading-none">
+                    Dashboard spec ready
+                  </p>
+                  {pbipError && (
+                    <p className="font-mono text-[9px] text-red/80 mt-1 leading-snug">{pbipError}</p>
+                  )}
+                </div>
+                <button
+                  onClick={buildPbip}
+                  disabled={buildingPbip}
+                  className="flex-shrink-0 font-mono text-[9px] tracking-wider uppercase px-4 py-2 bg-red text-paper rounded-lg hover:bg-red/80 disabled:opacity-40 transition-colors whitespace-nowrap"
+                >
+                  {buildingPbip ? 'Building…' : 'Build PBIP ↓'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Input */}
         <div ref={inputAreaRef} className="flex-shrink-0 px-6 pb-6">
