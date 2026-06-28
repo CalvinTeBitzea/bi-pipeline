@@ -1,0 +1,16 @@
+# Builder (Python)
+builder/.venv/
+builder/artifacts/
+builder/memories/
+builder/__pycache__/
+builder/**/__pycache__/
+builder/.pytest_cache/
+
+# Agent (Node)
+agent/node_modules/
+agent/.next/
+agent/.env.local
+
+# Common
+*.DS_Store
+*.pyc
