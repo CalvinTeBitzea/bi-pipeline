@@ -400,6 +400,60 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
         </ul>
       </div>
 
+      {/* Build PBIP — always visible, state-driven */}
+      <div className="px-4 py-3 border-b border-ink/10">
+        <div className="flex items-center justify-between mb-2">
+          <p className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted">Build PBIP</p>
+          {!fetched && !fetching && (
+            <button
+              onClick={onFetchFiles}
+              className="font-mono text-[8px] tracking-wider uppercase text-muted/70 hover:text-red transition-colors"
+            >
+              Check
+            </button>
+          )}
+          {fetching && (
+            <span className="font-mono text-[8px] text-muted/60">…</span>
+          )}
+          {fetched && !sessionFiles.some(f => f.name === 'dashboard_spec.json') && (
+            <button
+              onClick={onFetchFiles}
+              className="font-mono text-[8px] tracking-wider uppercase text-muted/70 hover:text-red transition-colors"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+        {(() => {
+          const hasSpec  = sessionFiles.some(f => f.name === 'dashboard_spec.json')
+          const hasModel = sessionFiles.some(f => f.name === 'semantic_model.json')
+          const ready    = hasSpec && hasModel
+          return (
+            <>
+              <button
+                onClick={ready ? onBuildPbip : undefined}
+                disabled={buildingPbip || !ready}
+                className="w-full font-mono text-[9px] tracking-wider uppercase px-3 py-2 bg-red text-paper rounded-lg hover:bg-red/80 disabled:opacity-30 transition-colors"
+              >
+                {buildingPbip ? 'Building…' : 'Build PBIP ↓'}
+              </button>
+              <p className="font-mono text-[8px] text-muted/60 mt-1.5 leading-snug">
+                {fetching
+                  ? 'Checking for output files…'
+                  : ready
+                  ? 'Spec ready — click to download zip'
+                  : fetched
+                  ? 'No spec found — run the agent first'
+                  : 'Click Check to load files from this session'}
+              </p>
+              {pbipError && (
+                <p className="font-mono text-[8px] text-red/80 mt-1 leading-snug">{pbipError}</p>
+              )}
+            </>
+          )
+        })()}
+      </div>
+
       {/* Output files */}
       <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-5">
 
@@ -472,24 +526,6 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
                 )
               })}
             </ul>
-            {sessionFiles.some(f => f.name === 'dashboard_spec.json') &&
-             sessionFiles.some(f => f.name === 'semantic_model.json') && (
-              <div className="mt-3 pt-3 border-t border-border/30">
-                <button
-                  onClick={onBuildPbip}
-                  disabled={buildingPbip}
-                  className="w-full font-mono text-[9px] tracking-wider uppercase px-3 py-2 bg-red text-paper rounded hover:bg-red/80 disabled:opacity-40 transition-colors"
-                >
-                  {buildingPbip ? 'Building…' : 'Build PBIP ↓'}
-                </button>
-                {pbipError && (
-                  <p className="font-mono text-[9px] text-red/80 mt-1.5 leading-relaxed">{pbipError}</p>
-                )}
-                <p className="font-mono text-[9px] text-muted/70 mt-1.5 leading-relaxed">
-                  Extract zip into MyReport.Report/definition/pages/ then reopen Desktop.
-                </p>
-              </div>
-            )}
             </>
           )}
         </div>
