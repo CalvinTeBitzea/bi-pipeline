@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { gsap } from 'gsap'
-import { ArrowUp, Download, Paperclip, Plus, Eye, X } from 'lucide-react'
+import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin } from 'lucide-react'
 import SetupPanels from './SetupPanels'
 
 const AGENT_LABEL        = 'BI Wireframe Agent'
@@ -296,11 +296,128 @@ function PreviewPanel({ file, onClose }) {
   )
 }
 
+// ─── SessionItem ─────────────────────────────────────────────────────────────
+
+function sessionFallbackName(sessions, id) {
+  const i = sessions.findIndex(s => s.id === id)
+  if (i === -1) return 'Conversation'
+  const pos = sessions.length - i
+  return pos === 1 && sessions.length > 1 ? 'Original' : `Conversation ${pos}`
+}
+
+function SessionItem({ session, fallbackName, isActive, onSwitch, onRename, onPin }) {
+  const [editing, setEditing]   = useState(false)
+  const [editName, setEditName] = useState('')
+  const inputRef = useRef(null)
+
+  const startEdit = (e) => {
+    e.stopPropagation()
+    setEditName(session.name || '')
+    setEditing(true)
+  }
+
+  const commit = () => {
+    setEditing(false)
+    const trimmed = editName.trim()
+    if (trimmed !== session.name) onRename(session.id, trimmed)
+  }
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select()
+  }, [editing])
+
+  const displayName = session.name || fallbackName
+
+  return (
+    <li>
+      <div className={`group flex items-center gap-1 px-2 py-1.5 rounded-md transition-colors ${
+        isActive ? 'bg-ink/8' : 'hover:bg-ink/5'
+      }`}>
+        {editing ? (
+          <input
+            ref={inputRef}
+            value={editName}
+            onChange={e => setEditName(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
+            autoFocus
+            placeholder={displayName}
+            className="flex-1 min-w-0 font-mono text-[10px] bg-transparent border-b border-ink/30 outline-none text-ink placeholder:text-muted/40 py-0"
+          />
+        ) : (
+          <button onClick={() => onSwitch(session.id)} className="flex-1 min-w-0 text-left">
+            <p className={`font-mono text-[10px] leading-snug truncate ${isActive ? 'text-ink' : 'text-muted'}`}>
+              {isActive && <span className="text-red mr-1">●</span>}
+              {session.pinned && !isActive && <span className="text-muted/40 mr-1">⊙</span>}
+              {displayName}
+            </p>
+            <p className="font-mono text-[8px] text-muted/70 mt-0.5">{fmtDate(session.createdAt)}</p>
+          </button>
+        )}
+        {!editing && (
+          <div className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={startEdit}
+              title="Rename"
+              className="p-0.5 text-muted/50 hover:text-ink transition-colors"
+            >
+              <Pencil size={8} />
+            </button>
+            <button
+              onClick={() => onPin(session.id)}
+              title={session.pinned ? 'Unpin' : 'Pin'}
+              className={`p-0.5 transition-colors ${session.pinned ? 'text-red hover:text-red/60' : 'text-muted/50 hover:text-red'}`}
+            >
+              <Pin size={8} />
+            </button>
+          </div>
+        )}
+      </div>
+    </li>
+  )
+}
+
+// ─── ConversationHeader ───────────────────────────────────────────────────────
+
+function ConversationHeader({ name, fallback, onRename }) {
+  const [editing, setEditing]   = useState(false)
+  const [editName, setEditName] = useState('')
+
+  const start = () => { setEditName(name || ''); setEditing(true) }
+
+  const commit = () => {
+    setEditing(false)
+    const trimmed = editName.trim()
+    if (trimmed !== name) onRename(trimmed)
+  }
+
+  if (editing) return (
+    <input
+      value={editName}
+      onChange={e => setEditName(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
+      autoFocus
+      placeholder={fallback}
+      className="font-grotesk font-bold text-[13px] text-ink bg-transparent border-b border-ink/30 outline-none w-full max-w-sm placeholder:text-muted/40"
+    />
+  )
+
+  return (
+    <button onClick={start} className="group flex items-center gap-2 text-left">
+      <span className={`font-grotesk font-bold text-[13px] leading-snug ${name ? 'text-ink' : 'text-muted/50'}`}>
+        {name || fallback}
+      </span>
+      <Pencil size={9} className="text-muted/30 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+    </button>
+  )
+}
+
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
 function fmtTok(n) { return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n) }
 
-function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError }) {
+function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, darkMode, onToggleDark, onRenameSession, onPinSession }) {
   const ref = useRef(null)
   const [sessionUsage, setSessionUsage]   = useState(null)
   const [usageFetched, setUsageFetched]   = useState(false)
@@ -341,23 +458,32 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
   const ltHit     = ltIn > 0 ? Math.round(ltCacheR / ltIn * 100) : 0
 
   return (
-    <aside ref={ref} className="w-52 flex-shrink-0 flex flex-col bg-offwhite border-r border-ink/10">
+    <aside ref={ref} className="w-72 flex-shrink-0 flex flex-col bg-offwhite border-r border-ink/10">
 
       {/* Agent info */}
       <div className="px-4 pt-5 pb-4 border-b border-ink/10">
-        <div className="flex items-start gap-2.5">
-          <span className="relative flex h-2 w-2 flex-shrink-0 mt-1">
-            {!isIdle && (
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red opacity-75" />
-            )}
-            <span className={`relative inline-flex rounded-full h-2 w-2 ${isIdle ? 'bg-ink/20' : 'bg-red'}`} />
-          </span>
-          <div>
-            <p className="font-mono text-[8px] tracking-[0.18em] uppercase text-muted leading-none mb-1">
-              {isIdle ? 'Ready' : agentStatus === 'thinking' ? 'Thinking…' : 'Responding…'}
-            </p>
-            <p className="font-grotesk font-bold text-[12px] text-ink leading-tight">{AGENT_LABEL}</p>
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <span className="relative flex h-2 w-2 flex-shrink-0 mt-1">
+              {!isIdle && (
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red opacity-75" />
+              )}
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${isIdle ? 'bg-ink/20' : 'bg-red'}`} />
+            </span>
+            <div className="min-w-0">
+              <p className="font-mono text-[8px] tracking-[0.18em] uppercase text-muted leading-none mb-1">
+                {isIdle ? 'Ready' : agentStatus === 'thinking' ? 'Thinking…' : 'Responding…'}
+              </p>
+              <p className="font-grotesk font-bold text-[12px] text-ink leading-tight truncate">{AGENT_LABEL}</p>
+            </div>
           </div>
+          <button
+            onClick={onToggleDark}
+            title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="flex-shrink-0 p-1 text-muted/60 hover:text-ink transition-colors rounded"
+          >
+            {darkMode ? <Sun size={12} /> : <Moon size={12} />}
+          </button>
         </div>
       </div>
 
@@ -375,29 +501,26 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
             {creatingSession ? 'Creating…' : 'New'}
           </button>
         </div>
-        <ul className="flex flex-col gap-0.5 max-h-36 overflow-y-auto">
-          {sessions.map((s, i) => {
-            const isActive = s.id === activeSessionId
-            return (
-              <li key={s.id}>
-                <button
-                  onClick={() => onSwitchSession(s.id)}
-                  className={`w-full text-left px-2 py-1.5 rounded-md transition-colors ${
-                    isActive ? 'bg-ink/8 text-ink' : 'text-muted hover:bg-ink/5 hover:text-ink'
-                  }`}
-                >
-                  <p className="font-mono text-[10px] leading-snug truncate">
-                    {isActive && <span className="text-red mr-1">●</span>}
-                    {sessions.length - i === 1 && sessions.length > 1
-                      ? 'Original'
-                      : `Conversation ${sessions.length - i}`}
-                  </p>
-                  <p className="font-mono text-[8px] text-muted/70 mt-0.5">{fmtDate(s.createdAt)}</p>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
+        {(() => {
+          const pinned   = sessions.filter(s => s.pinned)
+          const unpinned = sessions.filter(s => !s.pinned)
+          const ordered  = [...pinned, ...unpinned]
+          return (
+            <ul className="flex flex-col gap-0.5 max-h-40 overflow-y-auto">
+              {ordered.map(s => (
+                <SessionItem
+                  key={s.id}
+                  session={s}
+                  fallbackName={sessionFallbackName(sessions, s.id)}
+                  isActive={s.id === activeSessionId}
+                  onSwitch={onSwitchSession}
+                  onRename={onRenameSession}
+                  onPin={onPinSession}
+                />
+              ))}
+            </ul>
+          )
+        })()}
       </div>
 
       {/* Build PBIP — always visible, state-driven */}
@@ -603,6 +726,9 @@ export default function ChatInterface() {
   const [fetched, setFetched]               = useState(false)
   const [buildingPbip, setBuildingPbip]     = useState(false)
   const [pbipError, setPbipError]           = useState(null)
+  const [darkMode, setDarkMode]             = useState(() => {
+    try { return localStorage.getItem('bi_dark') === '1' } catch { return false }
+  })
 
   const bottomRef    = useRef(null)
   const bodyRef      = useRef(null)
@@ -632,7 +758,7 @@ export default function ChatInterface() {
       fetchHistory(stored.activeId)
     } else {
       // Seed localStorage with the default session
-      const seed = [{ id: DEFAULT_SESSION_ID, createdAt: new Date().toISOString() }]
+      const seed = [{ id: DEFAULT_SESSION_ID, createdAt: new Date().toISOString(), name: '', pinned: false }]
       setSessions(seed)
       saveStorage(seed, DEFAULT_SESSION_ID)
       fetchHistory(DEFAULT_SESSION_ID)
@@ -665,7 +791,7 @@ export default function ChatInterface() {
       const data = await res.json()
       if (!data.sessionId) throw new Error('No session ID returned')
 
-      const newEntry = { id: data.sessionId, createdAt: data.createdAt ?? new Date().toISOString() }
+      const newEntry = { id: data.sessionId, createdAt: data.createdAt ?? new Date().toISOString(), name: '', pinned: false }
       setSessions(prev => {
         const updated = [newEntry, ...prev]
         saveStorage(updated, data.sessionId)
@@ -681,6 +807,29 @@ export default function ChatInterface() {
     }
     setCreatingSession(false)
   }, [creatingSession])
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode)
+    try { localStorage.setItem('bi_dark', darkMode ? '1' : '0') } catch {}
+  }, [darkMode])
+
+  const toggleDark = useCallback(() => setDarkMode(d => !d), [])
+
+  const renameSession = useCallback((id, name) => {
+    setSessions(prev => {
+      const updated = prev.map(s => s.id === id ? { ...s, name } : s)
+      saveStorage(updated, activeSessionIdRef.current)
+      return updated
+    })
+  }, [])
+
+  const pinSession = useCallback((id) => {
+    setSessions(prev => {
+      const updated = prev.map(s => s.id === id ? { ...s, pinned: !s.pinned } : s)
+      saveStorage(updated, activeSessionIdRef.current)
+      return updated
+    })
+  }, [])
 
   const fetchSessionFiles = useCallback(async () => {
     setFetching(true)
@@ -878,6 +1027,8 @@ export default function ChatInterface() {
 
   const isIdle     = agentStatus === 'idle'
   const isSetup    = messages.length === 0
+  const currentSession      = sessions.find(s => s.id === activeSessionId)
+  const activeSessionFallback = sessionFallbackName(sessions, activeSessionId)
   const hasContent = isSetup
     ? Boolean(schema.trim() || context.trim() || attachedFiles.length > 0 || input.trim())
     : Boolean(input.trim())
@@ -907,14 +1058,29 @@ export default function ChatInterface() {
         buildingPbip={buildingPbip}
         onBuildPbip={buildPbip}
         pbipError={pbipError}
+        darkMode={darkMode}
+        onToggleDark={toggleDark}
+        onRenameSession={renameSession}
+        onPinSession={pinSession}
       />
 
       {/* ── MAIN ─────────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden">
 
+        {/* Conversation header — height mirrors sidebar agent-info to align the visual break */}
+        <div className="flex-shrink-0 flex items-center px-6 border-b border-ink/10 min-h-[64px]">
+          <div className="max-w-2xl w-full mx-auto">
+            <ConversationHeader
+              name={currentSession?.name ?? ''}
+              fallback={activeSessionFallback}
+              onRename={(name) => renameSession(activeSessionId, name)}
+            />
+          </div>
+        </div>
+
         {/* Messages */}
         <div ref={bodyRef} className="flex-1 overflow-y-auto">
-          <div className="max-w-2xl mx-auto px-6 py-8">
+          <div className="max-w-2xl mx-auto px-6 pt-6 pb-8">
 
             {historyLoading ? (
               <p className="font-mono text-[10px] text-muted/60 tracking-widest uppercase">Loading history…</p>
