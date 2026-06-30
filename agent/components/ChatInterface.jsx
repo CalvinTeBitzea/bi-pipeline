@@ -242,12 +242,12 @@ function PreviewPanel({ file, onClose }) {
   const isMd   = ext === 'md'
 
   return (
-    <div ref={panelRef} style={{ width: widthRef.current }} className="flex-shrink-0 flex overflow-hidden">
+    <div ref={panelRef} style={{ width: widthRef.current }} className="flex-shrink-0 flex h-full overflow-hidden">
 
       {/* Drag handle — wide invisible hit area, thin visual indicator */}
       <div
         onMouseDown={onDragStart}
-        className="relative w-4 flex-shrink-0 cursor-col-resize group/handle"
+        className="relative w-4 h-full flex-shrink-0 cursor-col-resize group/handle"
       >
         <div className="absolute inset-y-0 left-1.5 w-px bg-ink/10 group-hover/handle:bg-red/50 active:bg-red/70 transition-colors duration-100" />
       </div>
