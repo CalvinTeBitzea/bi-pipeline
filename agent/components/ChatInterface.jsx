@@ -361,6 +361,7 @@ function SessionItem({
   session, fallbackName, isActive, onSwitch, onRename, onPin,
   sessionFiles = [], fetching = false, fetched = false, onFetchFiles,
   onPreviewFile, previewFileName, buildingPbip, onBuildPbip, pbipError,
+  onRegenerateFiles, isIdle = true,
 }) {
   const [editing, setEditing]   = useState(false)
   const [editName, setEditName] = useState('')
@@ -391,6 +392,12 @@ function SessionItem({
     : !hasSpec ? 'Missing: dashboard_spec.json'
     : 'Missing: semantic_model.json'
 
+  // Readiness dot for non-active sessions (uses persisted fileStatus, no fetch needed)
+  const fileStatus = session.fileStatus
+  const statusDot  = !isActive && fileStatus
+    ? (fileStatus.hasSpec && fileStatus.hasModel ? 'ready' : 'partial')
+    : null
+
   return (
     <li>
       {/* Session row */}
@@ -415,7 +422,16 @@ function SessionItem({
               {session.pinned && !isActive && <span className="text-muted/60 mr-1">⊙</span>}
               {displayName}
             </p>
-            <p className="font-mono text-[10px] text-muted mt-0.5">{fmtDate(session.createdAt)}</p>
+            <p className="font-mono text-[10px] text-muted mt-0.5">
+              {fmtDate(session.createdAt)}
+              {statusDot && (
+                <span
+                  style={{ color: statusDot === 'ready' ? '#22c55e' : '#f59e0b' }}
+                  className="ml-1 text-[8px]"
+                  title={statusDot === 'ready' ? 'PBIP files ready' : 'PBIP files incomplete'}
+                >●</span>
+              )}
+            </p>
           </button>
         )}
         {!editing && (
@@ -444,7 +460,18 @@ function SessionItem({
           )}
           {fetching && <p className="font-mono text-[10px] text-muted py-1">Loading…</p>}
           {fetched && sessionFiles.length === 0 && (
-            <p className="font-mono text-[10px] text-muted py-1">No output files yet</p>
+            <div className="py-1">
+              <p className="font-mono text-[10px] text-muted mb-1.5">No output files yet</p>
+              {onRegenerateFiles && (
+                <button
+                  onClick={() => onRegenerateFiles(['dashboard_spec.json', 'semantic_model.json'])}
+                  disabled={!isIdle}
+                  className="w-full font-mono text-[9px] tracking-wider uppercase px-2 py-1.5 bg-ink/8 text-muted hover:text-ink disabled:opacity-30 rounded transition-colors"
+                >
+                  Generate missing files →
+                </button>
+              )}
+            </div>
           )}
           {fetched && sessionFiles.length > 0 && (
             <>
@@ -516,7 +543,23 @@ function SessionItem({
                   {buildingPbip ? 'Building…' : 'Build PBIP ↓'}
                 </button>
                 {!canBuild && (
-                  <p className="font-mono text-[9px] text-muted mt-1.5 leading-snug">{buildHint}</p>
+                  <div className="mt-1.5">
+                    <p className="font-mono text-[9px] text-muted leading-snug mb-1.5">{buildHint}</p>
+                    {onRegenerateFiles && (
+                      <button
+                        onClick={() => {
+                          const missing = []
+                          if (!hasSpec) missing.push('dashboard_spec.json')
+                          if (!hasModel) missing.push('semantic_model.json')
+                          onRegenerateFiles(missing)
+                        }}
+                        disabled={!isIdle}
+                        className="w-full font-mono text-[9px] tracking-wider uppercase px-2 py-1.5 bg-ink/8 text-muted hover:text-ink disabled:opacity-30 rounded transition-colors"
+                      >
+                        Generate missing files →
+                      </button>
+                    )}
+                  </div>
                 )}
                 {pbipError && (
                   <p className="font-mono text-[10px] text-red/80 mt-1.5 leading-snug">{pbipError}</p>
@@ -570,7 +613,7 @@ function ConversationHeader({ name, fallback, onRename }) {
 
 function fmtTok(n) { return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n) }
 
-function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, darkMode, onToggleDark, onRenameSession, onPinSession }) {
+function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, onRenameSession, onPinSession }) {
   const ref = useRef(null)
   const [sessionUsage, setSessionUsage]   = useState(null)
   const [usageFetched, setUsageFetched]   = useState(false)
@@ -682,6 +725,8 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
                     buildingPbip={buildingPbip}
                     onBuildPbip={onBuildPbip}
                     pbipError={s.id === activeSessionId ? pbipError : null}
+                    onRegenerateFiles={onRegenerateFiles}
+                    isIdle={isIdle}
                   />
                 ))}
               </ul>
@@ -871,10 +916,23 @@ export default function ChatInterface() {
   const fetchSessionFiles = useCallback(async () => {
     setFetching(true)
     try {
-      const res  = await fetch(`/api/session-files?sessionId=${activeSessionIdRef.current}`)
-      const data = await res.json()
-      setSessionFiles(data.files ?? [])
+      const res   = await fetch(`/api/session-files?sessionId=${activeSessionIdRef.current}`)
+      const data  = await res.json()
+      const files = data.files ?? []
+      setSessionFiles(files)
       setFetched(true)
+      // Persist readiness status on the session so all sidebar items can show it
+      const hasSpec  = files.some(f => f.name === 'dashboard_spec.json')
+      const hasModel = files.some(f => f.name === 'semantic_model.json')
+      setSessions(prev => {
+        const updated = prev.map(s =>
+          s.id === activeSessionIdRef.current
+            ? { ...s, fileStatus: { hasSpec, hasModel } }
+            : s
+        )
+        saveStorage(updated, activeSessionIdRef.current)
+        return updated
+      })
     } catch {}
     setFetching(false)
   }, [])
@@ -946,38 +1004,8 @@ export default function ChatInterface() {
     el.style.height = Math.min(el.scrollHeight, 140) + 'px'
   }, [])
 
-  const sendMessage = useCallback(async () => {
-    if (agentStatus !== 'idle') return
-
-    const isSetup = messages.length === 0
-    let text
-
-    if (isSetup) {
-      const hasAny = schema.trim() || context.trim() || attachedFiles.length > 0 || input.trim()
-      if (!hasAny) return
-
-      const parts = ["I'm providing my data model and business context for dashboard planning.\n"]
-      if (schema.trim())
-        parts.push(`## DATA MODEL SCHEMA\n\`\`\`\n${schema.trim()}\n\`\`\``)
-      if (context.trim())
-        parts.push(`## BUSINESS CONTEXT\n${context.trim()}`)
-      for (const f of attachedFiles) {
-        if (f.binary || f.readError) {
-          parts.push(`## ATTACHED FILE: ${f.name}\n(Binary — content not extracted.)`)
-        } else if (f.content) {
-          parts.push(`## ATTACHED FILE: ${f.name}\n\`\`\`\n${f.content.slice(0, 40000)}\n\`\`\``)
-        }
-      }
-      if (input.trim()) parts.push(`## ADDITIONAL NOTES\n${input.trim()}`)
-      text = parts.join('\n\n')
-    } else {
-      text = input.trim()
-      if (!text) return
-    }
-
-    setInput('')
-    if (textareaRef.current) textareaRef.current.style.height = 'auto'
-    if (isSetup) { setSchema(''); setContext(''); setAttachedFiles([]) }
+  // Core send — builds the streaming loop, used by sendMessage and regenerateFiles
+  const dispatchToAgent = useCallback(async (text) => {
     setAgentStatus('thinking')
     setThinkHint('thinking')
     turnUsageAccum.current = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
@@ -985,8 +1013,7 @@ export default function ChatInterface() {
     const userMsg  = { role: 'user',  text, time: ts(), id: Date.now() }
     const agentId  = Date.now() + 1
     const agentMsg = { role: 'agent', text: '', time: ts(), id: agentId, streaming: true }
-
-    setMessages((prev) => [...prev, userMsg, agentMsg])
+    setMessages(prev => [...prev, userMsg, agentMsg])
 
     try {
       const res = await fetch('/api/chat', {
@@ -1056,7 +1083,49 @@ export default function ChatInterface() {
       )
       setAgentStatus('idle')
     }
-  }, [input, agentStatus, schema, context, attachedFiles, messages])
+  }, [])
+
+  const sendMessage = useCallback(async () => {
+    if (agentStatus !== 'idle') return
+
+    const isSetup = messages.length === 0
+    let text
+
+    if (isSetup) {
+      const hasAny = schema.trim() || context.trim() || attachedFiles.length > 0 || input.trim()
+      if (!hasAny) return
+
+      const parts = ["I'm providing my data model and business context for dashboard planning.\n"]
+      if (schema.trim())
+        parts.push(`## DATA MODEL SCHEMA\n\`\`\`\n${schema.trim()}\n\`\`\``)
+      if (context.trim())
+        parts.push(`## BUSINESS CONTEXT\n${context.trim()}`)
+      for (const f of attachedFiles) {
+        if (f.binary || f.readError) {
+          parts.push(`## ATTACHED FILE: ${f.name}\n(Binary — content not extracted.)`)
+        } else if (f.content) {
+          parts.push(`## ATTACHED FILE: ${f.name}\n\`\`\`\n${f.content.slice(0, 40000)}\n\`\`\``)
+        }
+      }
+      if (input.trim()) parts.push(`## ADDITIONAL NOTES\n${input.trim()}`)
+      text = parts.join('\n\n')
+    } else {
+      text = input.trim()
+      if (!text) return
+    }
+
+    setInput('')
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'
+    if (isSetup) { setSchema(''); setContext(''); setAttachedFiles([]) }
+    await dispatchToAgent(text)
+  }, [input, agentStatus, schema, context, attachedFiles, messages, dispatchToAgent])
+
+  const regenerateFiles = useCallback(async (missingFiles) => {
+    if (agentStatus !== 'idle') return
+    const list = missingFiles.map(f => `- ${f}`).join('\n')
+    const text = `Please review our conversation above and generate the missing pipeline files.\n\nWrite the following to /mnt/session/outputs/:\n${list}\n\nFollow your skill file exactly for the correct schemas and conventions. Run the completion gate (ls /mnt/session/outputs/) before ending your turn.`
+    await dispatchToAgent(text)
+  }, [agentStatus, dispatchToAgent])
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
@@ -1095,6 +1164,7 @@ export default function ChatInterface() {
         buildingPbip={buildingPbip}
         onBuildPbip={buildPbip}
         pbipError={pbipError}
+        onRegenerateFiles={regenerateFiles}
         darkMode={darkMode}
         onToggleDark={toggleDark}
         onRenameSession={renameSession}
