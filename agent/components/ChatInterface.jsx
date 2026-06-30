@@ -311,21 +311,21 @@ function ArchiveSection({ files, onPreviewFile }) {
     <div className="mb-1.5">
       <button
         onClick={() => setOpen(o => !o)}
-        className="font-mono text-[7px] text-muted/40 hover:text-muted/60 transition-colors flex items-center gap-1"
+        className="font-mono text-[9px] text-muted hover:text-ink transition-colors flex items-center gap-1"
       >
         {open ? '▾' : '▸'} Archive ({items.length})
       </button>
       {open && (
-        <ul className="mt-0.5 flex flex-col gap-0 pl-2 border-l border-ink/8">
+        <ul className="mt-1 flex flex-col gap-0 pl-2 border-l border-ink/10">
           {items.map((item, i) => (
             <li key={i} className="flex items-center gap-0.5">
               <button
                 onClick={() => onPreviewFile?.({ name: item.name, content: item.content })}
-                className="flex-1 min-w-0 text-left font-mono text-[8px] truncate py-0.5 text-muted/40 hover:text-muted/70 transition-colors"
+                className="flex-1 min-w-0 text-left font-mono text-[10px] truncate py-0.5 text-muted hover:text-ink transition-colors"
               >
                 {item.name}
               </button>
-              <span className="font-mono text-[7px] text-muted/30 flex-shrink-0 mr-0.5">v{item.version}</span>
+              <span className="font-mono text-[9px] text-muted flex-shrink-0 mr-0.5">v{item.version}</span>
               <button
                 onClick={() => {
                   const dotIdx = item.name.lastIndexOf('.')
@@ -334,10 +334,10 @@ function ArchiveSection({ files, onPreviewFile }) {
                     : `${item.name}_v${item.version}`
                   downloadBlob(versioned, item.content)
                 }}
-                className="flex-shrink-0 p-0.5 text-muted/30 hover:text-muted/60 transition-colors"
+                className="flex-shrink-0 p-0.5 text-muted hover:text-ink transition-colors"
                 title={`Download v${item.version}`}
               >
-                <Download size={8} />
+                <Download size={10} />
               </button>
             </li>
           ))}
@@ -393,7 +393,7 @@ function SessionItem({
   return (
     <li>
       {/* Session row */}
-      <div className={`group flex items-center gap-1 px-2 py-1.5 rounded-md transition-colors ${
+      <div className={`group flex items-center gap-1 px-2 py-2 rounded-md transition-colors ${
         isActive ? 'bg-ink/8' : 'hover:bg-ink/5'
       }`}>
         {editing ? (
@@ -405,29 +405,29 @@ function SessionItem({
             onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
             autoFocus
             placeholder={displayName}
-            className="flex-1 min-w-0 font-mono text-[10px] bg-transparent border-b border-ink/30 outline-none text-ink placeholder:text-muted/40 py-0"
+            className="flex-1 min-w-0 font-mono text-[13px] bg-transparent border-b border-ink/30 outline-none text-ink placeholder:text-muted/40 py-0"
           />
         ) : (
           <button onClick={() => onSwitch(session.id)} className="flex-1 min-w-0 text-left">
-            <p className={`font-mono text-[10px] leading-snug truncate ${isActive ? 'text-ink' : 'text-muted'}`}>
+            <p className={`font-mono text-[13px] leading-snug truncate ${isActive ? 'text-ink' : 'text-ink/60'}`}>
               {isActive && <span className="text-red mr-1">●</span>}
-              {session.pinned && !isActive && <span className="text-muted/40 mr-1">⊙</span>}
+              {session.pinned && !isActive && <span className="text-muted/60 mr-1">⊙</span>}
               {displayName}
             </p>
-            <p className="font-mono text-[8px] text-muted/70 mt-0.5">{fmtDate(session.createdAt)}</p>
+            <p className="font-mono text-[10px] text-muted mt-0.5">{fmtDate(session.createdAt)}</p>
           </button>
         )}
         {!editing && (
           <div className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button onClick={startEdit} title="Rename" className="p-0.5 text-muted/50 hover:text-ink transition-colors">
-              <Pencil size={8} />
+            <button onClick={startEdit} title="Rename" className="p-0.5 text-muted hover:text-ink transition-colors">
+              <Pencil size={11} />
             </button>
             <button
               onClick={() => onPin(session.id)}
               title={session.pinned ? 'Unpin' : 'Pin'}
-              className={`p-0.5 transition-colors ${session.pinned ? 'text-red hover:text-red/60' : 'text-muted/50 hover:text-red'}`}
+              className={`p-0.5 transition-colors ${session.pinned ? 'text-red hover:text-red/60' : 'text-muted hover:text-red'}`}
             >
-              <Pin size={8} />
+              <Pin size={11} />
             </button>
           </div>
         )}
@@ -437,26 +437,26 @@ function SessionItem({
       {isActive && (
         <div className="ml-4 pl-3 border-l border-ink/10 mt-0.5 mb-2">
           {!fetched && !fetching && (
-            <button onClick={onFetchFiles} className="font-mono text-[8px] text-muted/50 hover:text-red transition-colors py-0.5">
+            <button onClick={onFetchFiles} className="font-mono text-[10px] text-muted hover:text-red transition-colors py-1">
               Load files →
             </button>
           )}
-          {fetching && <p className="font-mono text-[8px] text-muted/40 py-0.5">Loading…</p>}
+          {fetching && <p className="font-mono text-[10px] text-muted py-1">Loading…</p>}
           {fetched && sessionFiles.length === 0 && (
-            <p className="font-mono text-[8px] text-muted/40 py-0.5">No output files yet</p>
+            <p className="font-mono text-[10px] text-muted py-1">No output files yet</p>
           )}
           {fetched && sessionFiles.length > 0 && (
             <>
               {/* File list header with refresh */}
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="font-mono text-[7px] text-muted/40">
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-mono text-[9px] text-muted">
                   {sessionFiles.length} file{sessionFiles.length !== 1 ? 's' : ''}
                 </span>
                 <button
                   onClick={onFetchFiles}
                   disabled={fetching}
                   title="Refresh files"
-                  className="font-mono text-[7px] text-muted/40 hover:text-red transition-colors disabled:opacity-30"
+                  className="font-mono text-[9px] text-muted hover:text-red transition-colors disabled:opacity-30"
                 >
                   ↻
                 </button>
@@ -470,28 +470,28 @@ function SessionItem({
                     <li key={f.name} className="flex items-center gap-0.5">
                       <button
                         onClick={() => onPreviewFile?.(f)}
-                        className={`flex-1 min-w-0 text-left font-mono text-[9px] truncate py-0.5 transition-colors ${
-                          isPreviewing ? 'text-red' : 'text-muted/70 hover:text-ink'
+                        className={`flex-1 min-w-0 text-left font-mono text-[11px] truncate py-0.5 transition-colors ${
+                          isPreviewing ? 'text-red' : 'text-ink/60 hover:text-ink'
                         }`}
                       >
                         {f.name}
                       </button>
                       {f.version > 1 && (
-                        <span className="font-mono text-[7px] text-muted/40 flex-shrink-0 mr-0.5">v{f.version}</span>
+                        <span className="font-mono text-[9px] text-muted flex-shrink-0 mr-0.5">v{f.version}</span>
                       )}
                       <button
                         onClick={() => onPreviewFile?.(f)}
-                        className={`flex-shrink-0 p-0.5 transition-colors ${isPreviewing ? 'text-red' : 'text-muted/40 hover:text-ink'}`}
+                        className={`flex-shrink-0 p-0.5 transition-colors ${isPreviewing ? 'text-red' : 'text-muted hover:text-ink'}`}
                         title={`Preview ${f.name}`}
                       >
-                        <Eye size={9} />
+                        <Eye size={11} />
                       </button>
                       <button
                         onClick={() => downloadBlob(f.name, f.content)}
-                        className="flex-shrink-0 p-0.5 text-muted/40 hover:text-red transition-colors"
+                        className="flex-shrink-0 p-0.5 text-muted hover:text-red transition-colors"
                         title={`Download ${f.name}`}
                       >
-                        <Download size={9} />
+                        <Download size={11} />
                       </button>
                     </li>
                   )
@@ -506,19 +506,19 @@ function SessionItem({
                 <button
                   onClick={canBuild ? onBuildPbip : undefined}
                   disabled={!canBuild || buildingPbip}
-                  className={`w-full font-mono text-[8px] tracking-wider uppercase px-2 py-1.5 rounded transition-colors ${
+                  className={`w-full font-mono text-[10px] tracking-wider uppercase px-2 py-2 rounded transition-colors ${
                     canBuild
                       ? 'bg-red text-paper hover:bg-red/80 disabled:opacity-30'
-                      : 'bg-ink/8 text-muted/40 cursor-default'
+                      : 'bg-ink/8 text-muted cursor-default'
                   }`}
                 >
                   {buildingPbip ? 'Building…' : 'Build PBIP ↓'}
                 </button>
                 {!canBuild && (
-                  <p className="font-mono text-[7px] text-muted/40 mt-1 leading-snug">{buildHint}</p>
+                  <p className="font-mono text-[9px] text-muted mt-1.5 leading-snug">{buildHint}</p>
                 )}
                 {pbipError && (
-                  <p className="font-mono text-[8px] text-red/80 mt-1 leading-snug">{pbipError}</p>
+                  <p className="font-mono text-[10px] text-red/80 mt-1.5 leading-snug">{pbipError}</p>
                 )}
               </div>
             </>
@@ -610,7 +610,7 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
   const ltHit     = ltIn > 0 ? Math.round(ltCacheR / ltIn * 100) : 0
 
   return (
-    <aside ref={ref} className="w-72 flex-shrink-0 flex flex-col bg-offwhite border-r border-ink/10">
+    <aside ref={ref} className="w-80 flex-shrink-0 flex flex-col bg-offwhite border-r border-ink/10">
 
       {/* Agent info */}
       <div className="px-4 pt-5 pb-4 border-b border-ink/10">
@@ -623,10 +623,10 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
               <span className={`relative inline-flex rounded-full h-2 w-2 ${isIdle ? 'bg-ink/20' : 'bg-red'}`} />
             </span>
             <div className="min-w-0">
-              <p className="font-mono text-[8px] tracking-[0.18em] uppercase text-muted leading-none mb-1">
+              <p className="font-mono text-[10px] tracking-[0.18em] uppercase text-muted leading-none mb-1">
                 {isIdle ? 'Ready' : agentStatus === 'thinking' ? 'Thinking…' : 'Responding…'}
               </p>
-              <p className="font-grotesk font-bold text-[12px] text-ink leading-tight truncate">{AGENT_LABEL}</p>
+              <p className="font-grotesk font-bold text-[14px] text-ink leading-tight truncate">{AGENT_LABEL}</p>
             </div>
           </div>
           <button
@@ -641,12 +641,12 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
 
       {/* Conversations header */}
       <div className="flex-shrink-0 px-4 pt-3 pb-2 flex items-center justify-between border-b border-ink/10">
-        <span className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted">Conversations</span>
+        <span className="font-mono text-[10px] tracking-[0.15em] uppercase text-ink/50">Conversations</span>
         <button
           onClick={onNewSession}
           disabled={creatingSession || !isIdle}
           title="New conversation"
-          className="flex items-center gap-0.5 font-mono text-[8px] tracking-wider uppercase text-muted/70 hover:text-red transition-colors disabled:opacity-30"
+          className="flex items-center gap-0.5 font-mono text-[10px] tracking-wider uppercase text-muted hover:text-red transition-colors disabled:opacity-30"
         >
           <Plus size={9} />
           {creatingSession ? 'Creating…' : 'New'}
@@ -691,11 +691,11 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
         {/* Token usage */}
         <div className="px-4 py-4 border-t border-ink/10 mt-2">
           <div className="flex items-center justify-between mb-2.5">
-            <span className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted">Token Usage</span>
+            <span className="font-mono text-[10px] tracking-[0.15em] uppercase text-ink/50">Token Usage</span>
             {hasMessages && usageFetched && (
               <button
                 onClick={fetchUsage}
-                className="font-mono text-[8px] tracking-wider uppercase text-muted/70 hover:text-red transition-colors"
+                className="font-mono text-[10px] tracking-wider uppercase text-muted hover:text-red transition-colors"
               >
                 Refresh
               </button>
@@ -703,31 +703,31 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
           </div>
 
           {!hasMessages ? (
-            <p className="font-mono text-[10px] text-muted leading-relaxed">Stats appear after first run.</p>
+            <p className="font-mono text-[11px] text-muted leading-relaxed">Stats appear after first run.</p>
           ) : (
             <>
               {lastTurnUsage && ltIn > 0 && (
                 <div className="mb-3">
-                  <p className="font-mono text-[8px] text-muted/70 uppercase tracking-wider mb-1">Last turn</p>
-                  <p className="font-mono text-[10px] text-ink">
+                  <p className="font-mono text-[10px] text-muted uppercase tracking-wider mb-1">Last turn</p>
+                  <p className="font-mono text-[12px] text-ink">
                     {fmtTok(ltIn)} in · {fmtTok(ltOut)} out
                   </p>
                   {ltCacheR > 0 && (
-                    <p className="font-mono text-[9px] text-muted">{ltHit}% cached</p>
+                    <p className="font-mono text-[10px] text-muted">{ltHit}% cached</p>
                   )}
                 </div>
               )}
               {sessIn > 0 && (
                 <div>
-                  <p className="font-mono text-[8px] text-muted/70 uppercase tracking-wider mb-1">Session total</p>
-                  <p className="font-mono text-[10px] text-ink">
+                  <p className="font-mono text-[10px] text-muted uppercase tracking-wider mb-1">Session total</p>
+                  <p className="font-mono text-[12px] text-ink">
                     {fmtTok(sessIn)} in · {fmtTok(sessOut)} out
                   </p>
                   {sessCacheR > 0 && (
-                    <p className="font-mono text-[9px] text-muted">{sessHit}% cached</p>
+                    <p className="font-mono text-[10px] text-muted">{sessHit}% cached</p>
                   )}
                   {sessCacheW > 0 && (
-                    <p className="font-mono text-[9px] text-muted">{fmtTok(sessCacheW)} written to cache</p>
+                    <p className="font-mono text-[10px] text-muted">{fmtTok(sessCacheW)} written to cache</p>
                   )}
                 </div>
               )}
