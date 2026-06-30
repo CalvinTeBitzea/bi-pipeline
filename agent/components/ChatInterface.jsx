@@ -199,9 +199,9 @@ function renderMarkdown(md) {
 // ─── Preview panel ────────────────────────────────────────────────────────────
 
 function PreviewPanel({ file, onClose }) {
-  const panelRef = useRef(null)
-  const prevName = useRef(null)
-  const [width, setWidth] = useState(520)
+  const panelRef  = useRef(null)
+  const prevName  = useRef(null)
+  const widthRef  = useRef(520)   // source of truth — avoids React state snapping during drag
 
   useEffect(() => {
     if (file && file.name !== prevName.current) {
@@ -213,19 +213,18 @@ function PreviewPanel({ file, onClose }) {
   const onDragStart = useCallback((e) => {
     e.preventDefault()
     const initX = e.clientX
-    const initW = panelRef.current?.offsetWidth ?? 520
+    const initW = widthRef.current
 
     document.body.style.cursor     = 'col-resize'
     document.body.style.userSelect = 'none'
 
     const onMove = (ev) => {
-      if (!panelRef.current) return
-      const newW = Math.max(260, Math.min(initW + initX - ev.clientX, window.innerWidth * 0.8))
-      panelRef.current.style.width = `${newW}px`
+      const newW = Math.max(260, Math.min(initW + (initX - ev.clientX), window.innerWidth * 0.8))
+      widthRef.current = newW
+      if (panelRef.current) panelRef.current.style.width = `${newW}px`
     }
 
     const onUp = () => {
-      if (panelRef.current) setWidth(panelRef.current.offsetWidth)
       document.body.style.cursor     = ''
       document.body.style.userSelect = ''
       document.removeEventListener('mousemove', onMove)
@@ -243,13 +242,15 @@ function PreviewPanel({ file, onClose }) {
   const isMd   = ext === 'md'
 
   return (
-    <div ref={panelRef} style={{ width }} className="flex-shrink-0 flex overflow-hidden">
+    <div ref={panelRef} style={{ width: widthRef.current }} className="flex-shrink-0 flex overflow-hidden">
 
-      {/* Drag handle */}
+      {/* Drag handle — wide invisible hit area, thin visual indicator */}
       <div
         onMouseDown={onDragStart}
-        className="w-1 flex-shrink-0 bg-ink/10 hover:bg-red/50 active:bg-red/70 cursor-col-resize transition-colors duration-100"
-      />
+        className="relative w-4 flex-shrink-0 cursor-col-resize group/handle"
+      >
+        <div className="absolute inset-y-0 left-1.5 w-px bg-ink/10 group-hover/handle:bg-red/50 active:bg-red/70 transition-colors duration-100" />
+      </div>
 
       {/* Panel content */}
       <div className="flex-1 flex flex-col bg-offwhite overflow-hidden min-w-0">
