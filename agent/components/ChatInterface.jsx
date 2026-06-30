@@ -305,7 +305,11 @@ function sessionFallbackName(sessions, id) {
   return pos === 1 && sessions.length > 1 ? 'Original' : `Conversation ${pos}`
 }
 
-function SessionItem({ session, fallbackName, isActive, onSwitch, onRename, onPin }) {
+function SessionItem({
+  session, fallbackName, isActive, onSwitch, onRename, onPin,
+  sessionFiles = [], fetching = false, fetched = false, onFetchFiles,
+  onPreviewFile, previewFileName, buildingPbip, onBuildPbip, pbipError,
+}) {
   const [editing, setEditing]   = useState(false)
   const [editName, setEditName] = useState('')
   const inputRef = useRef(null)
@@ -327,9 +331,12 @@ function SessionItem({ session, fallbackName, isActive, onSwitch, onRename, onPi
   }, [editing])
 
   const displayName = session.name || fallbackName
+  const canBuild    = sessionFiles.some(f => f.name === 'dashboard_spec.json') &&
+                      sessionFiles.some(f => f.name === 'semantic_model.json')
 
   return (
     <li>
+      {/* Session row */}
       <div className={`group flex items-center gap-1 px-2 py-1.5 rounded-md transition-colors ${
         isActive ? 'bg-ink/8' : 'hover:bg-ink/5'
       }`}>
@@ -356,11 +363,7 @@ function SessionItem({ session, fallbackName, isActive, onSwitch, onRename, onPi
         )}
         {!editing && (
           <div className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
-              onClick={startEdit}
-              title="Rename"
-              className="p-0.5 text-muted/50 hover:text-ink transition-colors"
-            >
+            <button onClick={startEdit} title="Rename" className="p-0.5 text-muted/50 hover:text-ink transition-colors">
               <Pencil size={8} />
             </button>
             <button
@@ -373,6 +376,70 @@ function SessionItem({ session, fallbackName, isActive, onSwitch, onRename, onPi
           </div>
         )}
       </div>
+
+      {/* Nested files + build action — only for the active session */}
+      {isActive && (
+        <div className="ml-4 pl-3 border-l border-ink/10 mt-0.5 mb-2">
+          {!fetched && !fetching && (
+            <button onClick={onFetchFiles} className="font-mono text-[8px] text-muted/50 hover:text-red transition-colors py-0.5">
+              Load files →
+            </button>
+          )}
+          {fetching && <p className="font-mono text-[8px] text-muted/40 py-0.5">Loading…</p>}
+          {fetched && sessionFiles.length === 0 && (
+            <p className="font-mono text-[8px] text-muted/40 py-0.5">No output files yet</p>
+          )}
+          {fetched && sessionFiles.length > 0 && (
+            <>
+              <ul className="flex flex-col gap-0 mb-2">
+                {sessionFiles.map(f => {
+                  const isPreviewing = previewFileName === f.name
+                  return (
+                    <li key={f.name} className="flex items-center gap-0.5">
+                      <button
+                        onClick={() => onPreviewFile?.(f)}
+                        className={`flex-1 min-w-0 text-left font-mono text-[9px] truncate py-0.5 transition-colors ${
+                          isPreviewing ? 'text-red' : 'text-muted/70 hover:text-ink'
+                        }`}
+                      >
+                        {f.name}
+                      </button>
+                      <button
+                        onClick={() => onPreviewFile?.(f)}
+                        className={`flex-shrink-0 p-0.5 transition-colors ${isPreviewing ? 'text-red' : 'text-muted/40 hover:text-ink'}`}
+                        title={`Preview ${f.name}`}
+                      >
+                        <Eye size={9} />
+                      </button>
+                      <button
+                        onClick={() => downloadBlob(f.name, f.content)}
+                        className="flex-shrink-0 p-0.5 text-muted/40 hover:text-red transition-colors"
+                        title={`Download ${f.name}`}
+                      >
+                        <Download size={9} />
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+              {canBuild && (
+                <>
+                  <button
+                    onClick={onBuildPbip}
+                    disabled={buildingPbip}
+                    className="w-full font-mono text-[8px] tracking-wider uppercase px-2 py-1.5 bg-red text-paper rounded hover:bg-red/80 disabled:opacity-30 transition-colors"
+                  >
+                    {buildingPbip ? 'Building…' : 'Build PBIP ↓'}
+                  </button>
+                  {pbipError && (
+                    <p className="font-mono text-[8px] text-red/80 mt-1 leading-snug">{pbipError}</p>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </li>
   )
 }
@@ -487,174 +554,57 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
         </div>
       </div>
 
-      {/* Conversations */}
-      <div className="px-4 py-3 border-b border-ink/10">
-        <div className="flex items-center justify-between mb-2">
-          <span className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted">Conversations</span>
-          <button
-            onClick={onNewSession}
-            disabled={creatingSession || !isIdle}
-            title="New conversation"
-            className="flex items-center gap-0.5 font-mono text-[8px] tracking-wider uppercase text-muted/70 hover:text-red transition-colors disabled:opacity-30"
-          >
-            <Plus size={9} />
-            {creatingSession ? 'Creating…' : 'New'}
-          </button>
-        </div>
-        {(() => {
-          const pinned   = sessions.filter(s => s.pinned)
-          const unpinned = sessions.filter(s => !s.pinned)
-          const ordered  = [...pinned, ...unpinned]
-          return (
-            <ul className="flex flex-col gap-0.5 max-h-40 overflow-y-auto">
-              {ordered.map(s => (
-                <SessionItem
-                  key={s.id}
-                  session={s}
-                  fallbackName={sessionFallbackName(sessions, s.id)}
-                  isActive={s.id === activeSessionId}
-                  onSwitch={onSwitchSession}
-                  onRename={onRenameSession}
-                  onPin={onPinSession}
-                />
-              ))}
-            </ul>
-          )
-        })()}
+      {/* Conversations header */}
+      <div className="flex-shrink-0 px-4 pt-3 pb-2 flex items-center justify-between border-b border-ink/10">
+        <span className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted">Conversations</span>
+        <button
+          onClick={onNewSession}
+          disabled={creatingSession || !isIdle}
+          title="New conversation"
+          className="flex items-center gap-0.5 font-mono text-[8px] tracking-wider uppercase text-muted/70 hover:text-red transition-colors disabled:opacity-30"
+        >
+          <Plus size={9} />
+          {creatingSession ? 'Creating…' : 'New'}
+        </button>
       </div>
 
-      {/* Build PBIP — always visible, state-driven */}
-      <div className="px-4 py-3 border-b border-ink/10">
-        <div className="flex items-center justify-between mb-2">
-          <p className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted">Build PBIP</p>
-          {!fetched && !fetching && (
-            <button
-              onClick={onFetchFiles}
-              className="font-mono text-[8px] tracking-wider uppercase text-muted/70 hover:text-red transition-colors"
-            >
-              Check
-            </button>
-          )}
-          {fetching && (
-            <span className="font-mono text-[8px] text-muted/60">…</span>
-          )}
-          {fetched && !sessionFiles.some(f => f.name === 'dashboard_spec.json') && (
-            <button
-              onClick={onFetchFiles}
-              className="font-mono text-[8px] tracking-wider uppercase text-muted/70 hover:text-red transition-colors"
-            >
-              Retry
-            </button>
-          )}
-        </div>
-        {(() => {
-          const hasSpec  = sessionFiles.some(f => f.name === 'dashboard_spec.json')
-          const hasModel = sessionFiles.some(f => f.name === 'semantic_model.json')
-          const ready    = hasSpec && hasModel
-          return (
-            <>
-              <button
-                onClick={ready ? onBuildPbip : undefined}
-                disabled={buildingPbip || !ready}
-                className="w-full font-mono text-[9px] tracking-wider uppercase px-3 py-2 bg-red text-paper rounded-lg hover:bg-red/80 disabled:opacity-30 transition-colors"
-              >
-                {buildingPbip ? 'Building…' : 'Build PBIP ↓'}
-              </button>
-              <p className="font-mono text-[8px] text-muted/60 mt-1.5 leading-snug">
-                {fetching
-                  ? 'Checking for output files…'
-                  : ready
-                  ? 'Spec ready — click to download zip'
-                  : fetched
-                  ? 'No spec found — run the agent first'
-                  : 'Click Check to load files from this session'}
-              </p>
-              {pbipError && (
-                <p className="font-mono text-[8px] text-red/80 mt-1 leading-snug">{pbipError}</p>
-              )}
-            </>
-          )
-        })()}
-      </div>
+      {/* Scrollable body — sessions list + token usage */}
+      <div className="flex-1 overflow-y-auto">
 
-      {/* Output files */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-5">
-
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-1.5">
-              <Paperclip size={9} className="text-muted" />
-              <span className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted">Output Files</span>
-              {sessionFiles.length > 0 && (
-                <span className="bg-red text-paper text-[8px] rounded-full w-3.5 h-3.5 flex items-center justify-center font-bold ml-0.5">
-                  {sessionFiles.length}
-                </span>
-              )}
-            </div>
-            {hasMessages && (
-              <button
-                onClick={onFetchFiles}
-                disabled={fetching}
-                className="font-mono text-[8px] tracking-wider uppercase text-muted/70 hover:text-red transition-colors disabled:opacity-40"
-              >
-                {fetching ? '…' : fetched ? 'Refresh' : 'Fetch'}
-              </button>
-            )}
-          </div>
-
-          {!hasMessages ? (
-            <p className="font-mono text-[10px] text-muted leading-relaxed">Files appear here after the agent runs.</p>
-          ) : !fetched ? (
-            <p className="font-mono text-[10px] text-muted leading-relaxed">
-              {fetching ? 'Loading…' : 'Click Fetch to load output files.'}
-            </p>
-          ) : sessionFiles.length === 0 ? (
-            <p className="font-mono text-[10px] text-muted leading-relaxed">No output files found.</p>
-          ) : (
-            <>
-            <ul className="flex flex-col gap-0.5">
-              {sessionFiles.map((f) => {
-                const isActive = previewFileName === f.name
-                return (
-                  <li
-                    key={f.name}
-                    className={`flex items-center gap-1.5 px-2 py-2 rounded-lg transition-colors group ${
-                      isActive ? 'bg-ink/8' : 'hover:bg-surface/70'
-                    }`}
-                  >
-                    <button
-                      onClick={() => onPreviewFile?.(f)}
-                      className="flex-1 min-w-0 text-left"
-                      title={`Preview ${f.name}`}
-                    >
-                      <span className={`font-mono text-[10px] truncate block ${isActive ? 'text-red' : 'text-ink'}`}>
-                        {f.name}
-                      </span>
-                    </button>
-                    <button
-                      onClick={() => onPreviewFile?.(f)}
-                      className={`flex-shrink-0 transition-colors ${isActive ? 'text-red' : 'text-muted/60 group-hover:text-ink'}`}
-                      title={`Preview ${f.name}`}
-                    >
-                      <Eye size={10} />
-                    </button>
-                    <button
-                      onClick={() => downloadBlob(f.name, f.content)}
-                      className="flex-shrink-0 text-muted/60 hover:text-red transition-colors"
-                      title={`Download ${f.name}`}
-                    >
-                      <Download size={10} />
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-            </>
-          )}
+        <div className="px-3 pt-2 pb-2">
+          {(() => {
+            const pinned   = sessions.filter(s => s.pinned)
+            const unpinned = sessions.filter(s => !s.pinned)
+            const ordered  = [...pinned, ...unpinned]
+            return (
+              <ul className="flex flex-col gap-0.5">
+                {ordered.map(s => (
+                  <SessionItem
+                    key={s.id}
+                    session={s}
+                    fallbackName={sessionFallbackName(sessions, s.id)}
+                    isActive={s.id === activeSessionId}
+                    onSwitch={onSwitchSession}
+                    onRename={onRenameSession}
+                    onPin={onPinSession}
+                    sessionFiles={s.id === activeSessionId ? sessionFiles : []}
+                    fetching={s.id === activeSessionId ? fetching : false}
+                    fetched={s.id === activeSessionId ? fetched : false}
+                    onFetchFiles={onFetchFiles}
+                    onPreviewFile={onPreviewFile}
+                    previewFileName={previewFileName}
+                    buildingPbip={buildingPbip}
+                    onBuildPbip={onBuildPbip}
+                    pbipError={s.id === activeSessionId ? pbipError : null}
+                  />
+                ))}
+              </ul>
+            )
+          })()}
         </div>
 
         {/* Token usage */}
-        <div>
+        <div className="px-4 py-4 border-t border-ink/10 mt-2">
           <div className="flex items-center justify-between mb-2.5">
             <span className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted">Token Usage</span>
             {hasMessages && usageFetched && (
@@ -667,35 +617,36 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
             )}
           </div>
 
-          {!hasMessages && (
+          {!hasMessages ? (
             <p className="font-mono text-[10px] text-muted leading-relaxed">Stats appear after first run.</p>
-          )}
-
-          {lastTurnUsage && ltIn > 0 && (
-            <div className="mb-3">
-              <p className="font-mono text-[8px] text-muted/70 uppercase tracking-wider mb-1">Last turn</p>
-              <p className="font-mono text-[10px] text-ink">
-                {fmtTok(ltIn)} in · {fmtTok(ltOut)} out
-              </p>
-              {ltCacheR > 0 && (
-                <p className="font-mono text-[9px] text-muted">{ltHit}% cached</p>
+          ) : (
+            <>
+              {lastTurnUsage && ltIn > 0 && (
+                <div className="mb-3">
+                  <p className="font-mono text-[8px] text-muted/70 uppercase tracking-wider mb-1">Last turn</p>
+                  <p className="font-mono text-[10px] text-ink">
+                    {fmtTok(ltIn)} in · {fmtTok(ltOut)} out
+                  </p>
+                  {ltCacheR > 0 && (
+                    <p className="font-mono text-[9px] text-muted">{ltHit}% cached</p>
+                  )}
+                </div>
               )}
-            </div>
-          )}
-
-          {sessIn > 0 && (
-            <div>
-              <p className="font-mono text-[8px] text-muted/70 uppercase tracking-wider mb-1">Session total</p>
-              <p className="font-mono text-[10px] text-ink">
-                {fmtTok(sessIn)} in · {fmtTok(sessOut)} out
-              </p>
-              {sessCacheR > 0 && (
-                <p className="font-mono text-[9px] text-muted">{sessHit}% cached</p>
+              {sessIn > 0 && (
+                <div>
+                  <p className="font-mono text-[8px] text-muted/70 uppercase tracking-wider mb-1">Session total</p>
+                  <p className="font-mono text-[10px] text-ink">
+                    {fmtTok(sessIn)} in · {fmtTok(sessOut)} out
+                  </p>
+                  {sessCacheR > 0 && (
+                    <p className="font-mono text-[9px] text-muted">{sessHit}% cached</p>
+                  )}
+                  {sessCacheW > 0 && (
+                    <p className="font-mono text-[9px] text-muted">{fmtTok(sessCacheW)} written to cache</p>
+                  )}
+                </div>
               )}
-              {sessCacheW > 0 && (
-                <p className="font-mono text-[9px] text-muted">{fmtTok(sessCacheW)} written to cache</p>
-              )}
-            </div>
+            </>
           )}
         </div>
 
@@ -1112,33 +1063,6 @@ export default function ChatInterface() {
             <div ref={bottomRef} />
           </div>
         </div>
-
-        {/* Build PBIP action bar — shown when IR files are ready */}
-        {isIdle && !isSetup &&
-         sessionFiles.some(f => f.name === 'dashboard_spec.json') &&
-         sessionFiles.some(f => f.name === 'semantic_model.json') && (
-          <div className="flex-shrink-0 px-6 pb-2">
-            <div className="max-w-2xl mx-auto">
-              <div className="flex items-center justify-between gap-4 bg-ink/[0.04] border border-ink/12 rounded-xl px-4 py-2.5">
-                <div className="min-w-0">
-                  <p className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted leading-none">
-                    Dashboard spec ready
-                  </p>
-                  {pbipError && (
-                    <p className="font-mono text-[9px] text-red/80 mt-1 leading-snug">{pbipError}</p>
-                  )}
-                </div>
-                <button
-                  onClick={buildPbip}
-                  disabled={buildingPbip}
-                  className="flex-shrink-0 font-mono text-[9px] tracking-wider uppercase px-4 py-2 bg-red text-paper rounded-lg hover:bg-red/80 disabled:opacity-40 transition-colors whitespace-nowrap"
-                >
-                  {buildingPbip ? 'Building…' : 'Build PBIP ↓'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Input */}
         <div ref={inputAreaRef} className="flex-shrink-0 px-6 pb-6">
