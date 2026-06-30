@@ -296,6 +296,57 @@ function PreviewPanel({ file, onClose }) {
   )
 }
 
+// ─── ArchiveSection ──────────────────────────────────────────────────────────
+
+function ArchiveSection({ files, onPreviewFile }) {
+  const [open, setOpen] = useState(false)
+
+  const items = files
+    .flatMap(f => (f.archive ?? []).map(v => ({ name: f.name, ...v })))
+    .sort((a, b) => new Date(b.writtenAt) - new Date(a.writtenAt))
+
+  if (!items.length) return null
+
+  return (
+    <div className="mb-1.5">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="font-mono text-[7px] text-muted/40 hover:text-muted/60 transition-colors flex items-center gap-1"
+      >
+        {open ? '▾' : '▸'} Archive ({items.length})
+      </button>
+      {open && (
+        <ul className="mt-0.5 flex flex-col gap-0 pl-2 border-l border-ink/8">
+          {items.map((item, i) => (
+            <li key={i} className="flex items-center gap-0.5">
+              <button
+                onClick={() => onPreviewFile?.({ name: item.name, content: item.content })}
+                className="flex-1 min-w-0 text-left font-mono text-[8px] truncate py-0.5 text-muted/40 hover:text-muted/70 transition-colors"
+              >
+                {item.name}
+              </button>
+              <span className="font-mono text-[7px] text-muted/30 flex-shrink-0 mr-0.5">v{item.version}</span>
+              <button
+                onClick={() => {
+                  const dotIdx = item.name.lastIndexOf('.')
+                  const versioned = dotIdx > -1
+                    ? `${item.name.slice(0, dotIdx)}_v${item.version}${item.name.slice(dotIdx)}`
+                    : `${item.name}_v${item.version}`
+                  downloadBlob(versioned, item.content)
+                }}
+                className="flex-shrink-0 p-0.5 text-muted/30 hover:text-muted/60 transition-colors"
+                title={`Download v${item.version}`}
+              >
+                <Download size={8} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 // ─── SessionItem ─────────────────────────────────────────────────────────────
 
 function sessionFallbackName(sessions, id) {
@@ -331,8 +382,13 @@ function SessionItem({
   }, [editing])
 
   const displayName = session.name || fallbackName
-  const canBuild    = sessionFiles.some(f => f.name === 'dashboard_spec.json') &&
-                      sessionFiles.some(f => f.name === 'semantic_model.json')
+  const hasSpec     = sessionFiles.some(f => f.name === 'dashboard_spec.json')
+  const hasModel    = sessionFiles.some(f => f.name === 'semantic_model.json')
+  const canBuild    = hasSpec && hasModel
+  const buildHint   = !hasSpec && !hasModel
+    ? 'Needs dashboard_spec.json + semantic_model.json'
+    : !hasSpec ? 'Missing: dashboard_spec.json'
+    : 'Missing: semantic_model.json'
 
   return (
     <li>
@@ -391,7 +447,23 @@ function SessionItem({
           )}
           {fetched && sessionFiles.length > 0 && (
             <>
-              <ul className="flex flex-col gap-0 mb-2">
+              {/* File list header with refresh */}
+              <div className="flex items-center justify-between mb-0.5">
+                <span className="font-mono text-[7px] text-muted/40">
+                  {sessionFiles.length} file{sessionFiles.length !== 1 ? 's' : ''}
+                </span>
+                <button
+                  onClick={onFetchFiles}
+                  disabled={fetching}
+                  title="Refresh files"
+                  className="font-mono text-[7px] text-muted/40 hover:text-red transition-colors disabled:opacity-30"
+                >
+                  ↻
+                </button>
+              </div>
+
+              {/* Current files */}
+              <ul className="flex flex-col gap-0 mb-1.5">
                 {sessionFiles.map(f => {
                   const isPreviewing = previewFileName === f.name
                   return (
@@ -404,6 +476,9 @@ function SessionItem({
                       >
                         {f.name}
                       </button>
+                      {f.version > 1 && (
+                        <span className="font-mono text-[7px] text-muted/40 flex-shrink-0 mr-0.5">v{f.version}</span>
+                      )}
                       <button
                         onClick={() => onPreviewFile?.(f)}
                         className={`flex-shrink-0 p-0.5 transition-colors ${isPreviewing ? 'text-red' : 'text-muted/40 hover:text-ink'}`}
@@ -422,20 +497,30 @@ function SessionItem({
                   )
                 })}
               </ul>
-              {canBuild && (
-                <>
-                  <button
-                    onClick={onBuildPbip}
-                    disabled={buildingPbip}
-                    className="w-full font-mono text-[8px] tracking-wider uppercase px-2 py-1.5 bg-red text-paper rounded hover:bg-red/80 disabled:opacity-30 transition-colors"
-                  >
-                    {buildingPbip ? 'Building…' : 'Build PBIP ↓'}
-                  </button>
-                  {pbipError && (
-                    <p className="font-mono text-[8px] text-red/80 mt-1 leading-snug">{pbipError}</p>
-                  )}
-                </>
-              )}
+
+              {/* Archived older versions — collapsible */}
+              <ArchiveSection files={sessionFiles} onPreviewFile={onPreviewFile} />
+
+              {/* Build PBIP — always shown when files are loaded, disabled until spec is ready */}
+              <div className="mt-1.5">
+                <button
+                  onClick={canBuild ? onBuildPbip : undefined}
+                  disabled={!canBuild || buildingPbip}
+                  className={`w-full font-mono text-[8px] tracking-wider uppercase px-2 py-1.5 rounded transition-colors ${
+                    canBuild
+                      ? 'bg-red text-paper hover:bg-red/80 disabled:opacity-30'
+                      : 'bg-ink/8 text-muted/40 cursor-default'
+                  }`}
+                >
+                  {buildingPbip ? 'Building…' : 'Build PBIP ↓'}
+                </button>
+                {!canBuild && (
+                  <p className="font-mono text-[7px] text-muted/40 mt-1 leading-snug">{buildHint}</p>
+                )}
+                {pbipError && (
+                  <p className="font-mono text-[8px] text-red/80 mt-1 leading-snug">{pbipError}</p>
+                )}
+              </div>
             </>
           )}
         </div>
