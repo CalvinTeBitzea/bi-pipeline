@@ -6,7 +6,7 @@ import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin } fr
 import SetupPanels from './SetupPanels'
 
 const AGENT_LABEL        = 'BI Wireframe Agent'
-const DEFAULT_SESSION_ID = process.env.NEXT_PUBLIC_REFERENCE_SESSION_ID || 'sesn_01VqZTqWVuuLBdayQE34m1t5'
+const DEFAULT_SESSION_ID = process.env.NEXT_PUBLIC_REFERENCE_SESSION_ID || 'sesn_01S3zW6pLxWnwyxZ9rmB6tZB'
 const STORAGE_KEY        = 'bi_agent_sessions'
 
 function loadStorage() {

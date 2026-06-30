@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 
-const DEFAULT_SESSION_ID = process.env.REFERENCE_SESSION_ID || 'sesn_01VqZTqWVuuLBdayQE34m1t5'
+const DEFAULT_SESSION_ID = process.env.REFERENCE_SESSION_ID || 'sesn_01S3zW6pLxWnwyxZ9rmB6tZB'
 const BETA               = 'managed-agents-2026-04-01'
 
 // Allow up to 5-minute responses for long agent runs
