@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { gsap } from 'gsap'
-import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin } from 'lucide-react'
+import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin, Link } from 'lucide-react'
 import SetupPanels from './SetupPanels'
 
 const AGENT_LABEL        = 'BI Wireframe Agent'
@@ -562,7 +562,9 @@ function SessionItem({
                   </div>
                 )}
                 {pbipError && (
-                  <p className="font-mono text-[10px] text-red/80 mt-1.5 leading-snug">{pbipError}</p>
+                  <p className="font-mono text-[10px] text-red/80 mt-1.5 leading-snug" title={pbipError}>
+                    {pbipError.split('\n')[0].slice(0, 120)}
+                  </p>
                 )}
               </div>
             </>
@@ -613,7 +615,7 @@ function ConversationHeader({ name, fallback, onRename }) {
 
 function fmtTok(n) { return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n) }
 
-function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, onRenameSession, onPinSession }) {
+function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onLinkSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, onRenameSession, onPinSession }) {
   const ref = useRef(null)
   const [sessionUsage, setSessionUsage]   = useState(null)
   const [usageFetched, setUsageFetched]   = useState(false)
@@ -967,7 +969,9 @@ export default function ChatInterface() {
       a.href = url; a.download = `pages_${buildId}.zip`; a.click()
       URL.revokeObjectURL(url)
     } catch (e) {
-      setPbipError(e.message)
+      // Trim verbose jsonschema dumps — first line is the human-readable reason
+      const msg = (e.message ?? '').split('\n')[0].slice(0, 200)
+      setPbipError(msg || 'Build failed')
     }
     setBuildingPbip(false)
   }, [sessionFiles])
