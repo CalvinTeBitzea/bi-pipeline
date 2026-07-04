@@ -2,9 +2,9 @@
 Deterministic snap engine.
 
 Turns each visual's coarse `grid` hint ({col,row,colSpan,rowSpan} on a 12-column
-canvas) into a resolved pixel `layout` ({x,y,w,h,z}) on the 1280x720 PBIR canvas.
-This is the single layout authority shared by the HTML wireframe and the PBIR
-builder, so the two never drift.
+canvas) into a resolved pixel `layout` ({x,y,w,h,z}) on the FHD (1920x1080) PBIR
+canvas. This is the single layout authority shared by the HTML wireframe and the
+PBIR builder, so the two never drift.
 
 `grid.row` selects a horizontal **band** the engine owns vertically:
   row 0 → filter bar (slicers, thin)   row 1 → KPI band (cards)
@@ -15,17 +15,19 @@ cards → KPI band, everything else → chart grid) so there is one code path.
 """
 from __future__ import annotations
 
-# Canvas + spacing constants (PBIR units)
-CANVAS_W, CANVAS_H = 1280, 720
-MARGIN = 24      # left/right outer margin
-GUTTER = 12      # horizontal gap between grid columns
-VGAP = 12        # vertical gap between bands
-TOP = 16         # top margin
-BOTTOM = 10      # bottom margin
+# Canvas + spacing constants (PBIR units). FHD (1920x1080) is the house default
+# per contracts/HOUSE_DESIGN_BRIEF.md; spacing constants are scaled 1.5x from
+# the prior 1280x720 canvas (same 16:9 ratio) to preserve identical proportions.
+CANVAS_W, CANVAS_H = 1920, 1080
+MARGIN = 36      # left/right outer margin
+GUTTER = 18      # horizontal gap between grid columns
+VGAP = 18        # vertical gap between bands
+TOP = 24         # top margin
+BOTTOM = 15      # bottom margin
 COLS = 12
 
-FILTER_BAND_H = 48   # row 0
-KPI_BAND_H = 120     # row 1
+FILTER_BAND_H = 72    # row 0
+KPI_BAND_H = 180      # row 1
 MAX_VISUALS = 20     # realistic per-page budget (wireframe is authoritative)
 
 _Z_BASE = {"slicer": 500, "card": 1000}

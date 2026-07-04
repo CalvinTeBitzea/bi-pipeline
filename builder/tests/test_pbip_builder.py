@@ -28,6 +28,34 @@ def build(tmp_path, monkeypatch):
     return tmp_path
 
 
+@pytest.fixture()
+def full_report_path(tmp_path):
+    """A minimal Desktop-scaffolded .Report skeleton (report.json/version.json/
+    pages.json) — lets pbip_builder register the house theme and lets Gate 1b
+    (the official CLI validator) run against a real path, instead of the
+    incomplete pages-only output written in scaffold mode."""
+    report_dir = tmp_path / "Retail.Report"
+    (report_dir / "definition" / "pages").mkdir(parents=True)
+    (report_dir / "definition" / "version.json").write_text(json.dumps({"version": "2.0.0"}))
+    (report_dir / "definition" / "report.json").write_text(json.dumps({
+        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/"
+                   "definition/report/3.3.0/schema.json",
+        "themeCollection": {
+            "baseTheme": {
+                "name": "CY24SU10",
+                "reportVersionAtImport": {"visual": "5.61.0", "report": "5.61.0", "page": "5.61.0"},
+                "type": "SharedResources",
+            }
+        },
+    }))
+    (report_dir / "definition" / "pages" / "pages.json").write_text(json.dumps({
+        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/"
+                   "definition/pagesMetadata/1.0.0/schema.json",
+        "pageOrder": [], "activePageName": "",
+    }))
+    return report_dir
+
+
 def test_ingest_snaps_layout_and_validates(build):
     spec = store.read_artifact("r1", "dashboard_spec.json")
     for page in spec["pages"]:
@@ -69,3 +97,28 @@ def test_combo_bound_to_pareto_fields(build):
     assert qs["Y"]["projections"][0]["nativeQueryRef"] == "Net Revenue"
     assert qs["Y2"]["projections"][0]["nativeQueryRef"] == "Cumulative Net Revenue %"
     assert qs["Category"]["projections"][0]["queryRef"] == "Dim_Product.ProductName"
+
+
+def test_scatter_uses_x_y_size_roles_not_category_y_fallback(build):
+    """Regression guard: the generic Category+Y fallback is invalid for
+    scatterChart (missing required X, too many Y projections) — caught by
+    powerbi-report-author validate. See _build_query_state's scatterChart branch."""
+    result = pbip.run("r1", pbip_report_path=None)
+    scatter = next(json.loads(f.read_text()) for f in Path(result["output_dir"]).rglob("visual.json")
+                   if json.loads(f.read_text())["visual"]["visualType"] == "scatterChart")
+    qs = scatter["visual"]["query"]["queryState"]
+    assert "X" in qs and len(qs["X"]["projections"]) == 1
+    assert "Y" in qs and len(qs["Y"]["projections"]) == 1
+    assert "Size" in qs and len(qs["Size"]["projections"]) == 1
+    assert "Category" in qs and len(qs["Category"]["projections"]) == 1
+
+
+def test_gate1b_cli_validate_passes_when_installed(build, full_report_path):
+    """Gate 1b (powerbi-report-author validate) skips gracefully if the CLI
+    isn't installed, but must PASS when it is — regression guard so a future
+    change can't silently reintroduce a schema-invalid visual (like the
+    scatterChart bug this same gate caught)."""
+    result = pbip.run("r1", pbip_report_path=str(full_report_path))
+    if result["gate1b"]["passed"] is None:
+        pytest.skip("powerbi-report-author CLI not installed")
+    assert result["gate1b"]["passed"], result["gate1b"]["messages"]

@@ -54,7 +54,10 @@ Each sub-project deploys independently. In each Vercel project, set **Root Direc
 
 ## Shared interface
 
-See `contracts/AGENT_CONTRACT.md` for the full field spec.
+See `contracts/AGENT_CONTRACT.md` for the full field spec, and
+`contracts/HOUSE_DESIGN_BRIEF.md` for the default house tone/signature/theme every
+generated report inherits (built on `microsoft/skills-for-fabric`'s
+`powerbi-report-design`/`powerbi-report-authoring` skills).
 
 The agent emits two JSON artifacts. The builder consumes them:
 - `dashboard_spec.json` — pages, visuals, grid positions, skill references
@@ -87,7 +90,9 @@ npm run dev  # http://localhost:3000
 
 | Gate | When | How |
 |---|---|---|
-| Gate 1 | builder/ingest | JSON Schema validation on both inputs |
-| Gate 1b | builder/pbip_builder | All generated JSON files parse cleanly |
+| Gate 1 | builder/pbip_builder | All generated JSON files parse cleanly |
+| Gate 1b | builder/pbip_builder | `powerbi-report-author validate` (official CLI, skipped if not installed) |
 | Gate 2 | manual (Windows) | Open generated PBIP in Power BI Desktop |
 | Gate 3 | builder/pbip_builder | IR fidelity: page/visual counts + pixel positions |
+
+(Ingest's own JSON Schema validation on both inputs runs before any of the above, inside `agents/ingest.py`.)

@@ -1,0 +1,233 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/powerbi-desktop-samples/main/Report%20Theme%20JSON%20Schema/reportThemeSchema-2.153.json",
+  "name": "HouseEditorial-ca31b320.json",
+  "dataColors": [
+    "#0F172A",
+    "#D4A30A",
+    "#6B7280",
+    "#9CA3AF",
+    "#4B5563",
+    "#B45309",
+    "#374151",
+    "#78350F"
+  ],
+  "good": "#1C5E47",
+  "neutral": "#D4A30A",
+  "bad": "#C2615F",
+  "maximum": "#0F172A",
+  "center": "#D4A30A",
+  "minimum": "#F3F0E8",
+  "null": "#9CA3AF",
+  "foreground": "#1A1A1A",
+  "background": "#FFFFFF",
+  "tableAccent": "#E5E5E5",
+  "textClasses": {
+    "callout": {
+      "fontSize": 28,
+      "fontFace": "Segoe UI Semibold, Segoe UI, sans-serif",
+      "color": "#0F172A"
+    },
+    "title": {
+      "fontSize": 14,
+      "fontFace": "Georgia, serif",
+      "color": "#1A1A1A"
+    },
+    "header": {
+      "fontSize": 12,
+      "fontFace": "Segoe UI Semibold",
+      "color": "#1A1A1A"
+    },
+    "label": {
+      "fontSize": 10,
+      "fontFace": "Segoe UI, sans-serif",
+      "color": "#1A1A1A"
+    }
+  },
+  "visualStyles": {
+    "*": {
+      "*": {
+        "border": [
+          {
+            "show": false
+          }
+        ],
+        "dropShadow": [
+          {
+            "show": false
+          }
+        ],
+        "background": [
+          {
+            "color": {
+              "solid": {
+                "color": "#FFFFFF"
+              }
+            },
+            "transparency": 0
+          }
+        ],
+        "padding": [
+          {
+            "top": 8,
+            "bottom": 8,
+            "left": 8,
+            "right": 8
+          }
+        ],
+        "categoryAxis": [
+          {
+            "gridlineShow": false
+          }
+        ],
+        "valueAxis": [
+          {
+            "gridlineShow": false
+          }
+        ]
+      }
+    },
+    "tableEx": {
+      "*": {
+        "columnHeaders": [
+          {
+            "autoSizeColumnWidth": true,
+            "columnAdjustment": "growToFit",
+            "backColor": {
+              "solid": {
+                "color": "#F3F0E8"
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": "#1A1A1A"
+              }
+            },
+            "bold": true
+          }
+        ],
+        "values": [
+          {
+            "backColorPrimary": {
+              "solid": {
+                "color": "#FFFFFF"
+              }
+            },
+            "backColorSecondary": {
+              "solid": {
+                "color": "#FBFAF7"
+              }
+            },
+            "fontColorPrimary": {
+              "solid": {
+                "color": "#1A1A1A"
+              }
+            },
+            "fontColorSecondary": {
+              "solid": {
+                "color": "#1A1A1A"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "pivotTable": {
+      "*": {
+        "columnHeaders": [
+          {
+            "autoSizeColumnWidth": true,
+            "columnAdjustment": "growToFit",
+            "backColor": {
+              "solid": {
+                "color": "#F3F0E8"
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": "#1A1A1A"
+              }
+            },
+            "bold": true
+          }
+        ],
+        "values": [
+          {
+            "backColorPrimary": {
+              "solid": {
+                "color": "#FFFFFF"
+              }
+            },
+            "backColorSecondary": {
+              "solid": {
+                "color": "#FBFAF7"
+              }
+            },
+            "fontColorPrimary": {
+              "solid": {
+                "color": "#1A1A1A"
+              }
+            },
+            "fontColorSecondary": {
+              "solid": {
+                "color": "#1A1A1A"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "cardVisual": {
+      "*": {
+        "value": [
+          {
+            "bold": true,
+            "$id": "default"
+          }
+        ],
+        "label": [
+          {
+            "show": true,
+            "$id": "default"
+          }
+        ],
+        "cardCalloutArea": [
+          {
+            "paddingUniform": 0
+          }
+        ],
+        "border": [
+          {
+            "show": false
+          }
+        ],
+        "title": [
+          {
+            "show": false
+          }
+        ]
+      }
+    },
+    "textbox": {
+      "*": {
+        "padding": [
+          {
+            "top": 0,
+            "bottom": 0,
+            "left": 0,
+            "right": 0
+          }
+        ],
+        "background": [
+          {
+            "show": false
+          }
+        ],
+        "border": [
+          {
+            "show": false
+          }
+        ]
+      }
+    }
+  }
+}

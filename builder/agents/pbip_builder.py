@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -34,9 +36,14 @@ from lib import layout as layout_engine
 # Constants
 # ---------------------------------------------------------------------------
 
+# Every visual in a build (skill-built or fallback) is normalized to this one
+# resolved version — see _skill_outputs and _build_visual_json. Bumped to 2.9.0
+# (2026-07-04): the two pbi-skills had drifted to *different* hardcoded versions
+# (2.8.0 and 2.9.0) internally; 2.9.0 is confirmed clean against
+# `powerbi-report-author validate`.
 _SCHEMA_FALLBACK = (
     "https://developer.microsoft.com/json-schemas/fabric/item/report/"
-    "definition/visualContainer/2.0.0/schema.json"
+    "definition/visualContainer/2.9.0/schema.json"
 )
 _PAGE_SCHEMA = (
     "https://developer.microsoft.com/json-schemas/fabric/item/report/"
@@ -221,6 +228,20 @@ def _build_query_state(
         if pm:
             state["Y"] = {"projections": pm[:1]}
 
+    elif pbi_type == "scatterChart":
+        # scatterChart has distinct required X/Y roles (max 1 each) plus optional
+        # Size/Category — the generic Category+Y fallback below is invalid for it
+        # (found via powerbi-report-author validate: X missing, Y over max).
+        # Field order convention: measures[0]=X, measures[1]=Y, measures[2]=Size.
+        if pd:
+            state["Category"] = {"projections": pd[:1]}
+        if pm:
+            state["X"] = {"projections": pm[:1]}
+        if len(pm) > 1:
+            state["Y"] = {"projections": pm[1:2]}
+        if len(pm) > 2:
+            state["Size"] = {"projections": pm[2:3]}
+
     else:  # fallback: category + Y
         if pd:
             state["Category"] = {"projections": pd}
@@ -290,12 +311,18 @@ def _skill_tokens(skill, visual: dict, folder_name: str,
 
 
 def _skill_outputs(skill, visual: dict, folder_name: str,
-                   measure_defs: dict, dimension_defs: dict) -> tuple[list[dict], list[tuple[str, str]]]:
+                   measure_defs: dict, dimension_defs: dict,
+                   schema_url: str) -> tuple[list[dict], list[tuple[str, str]]]:
     """Fill a skill's templates once. Returns (visual_jsons, tmdl_fragments).
 
     visual_jsons — parsed *.visual.json objects with name aligned to folder_name
     tmdl_fragments — list of (filename, tmdl_text) for any *.tmdl templates
     Raises on unfilled tokens or invalid JSON.
+
+    `$schema` is overridden to `schema_url` on every skill-built visual — skill
+    template files pin their own version by hand (and have drifted between
+    skills: 2.8.0 vs 2.9.0), so every visual in a build is normalized to the one
+    schema_url resolved for this project instead.
     """
     tokens = _skill_tokens(skill, visual, folder_name, measure_defs, dimension_defs)
     filled = skill_lib.fill(skill, tokens)
@@ -305,6 +332,7 @@ def _skill_outputs(skill, visual: dict, folder_name: str,
         if rel.endswith(".visual.json"):
             vj = json.loads(text)
             vj["name"] = folder_name
+            vj["$schema"] = schema_url
             visuals.append(vj)
         elif rel.endswith(".tmdl"):
             tmdl.append((Path(rel).name, text))
@@ -369,8 +397,8 @@ def _build_page_json(page_spec: dict, folder_name: str) -> dict:
         "name": folder_name,
         "displayName": page_spec.get("name", "Page"),
         "displayOption": "FitToPage",
-        "width": 1280,
-        "height": 720,
+        "width": layout_engine.CANVAS_W,
+        "height": layout_engine.CANVAS_H,
     }
 
 
@@ -464,6 +492,58 @@ def _update_pages_json(pages_dir: Path, new_page_names: list[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# House theme registration (contracts/HOUSE_DESIGN_BRIEF.md)
+# ---------------------------------------------------------------------------
+
+_HOUSE_THEME_DIR = Path(__file__).parent.parent / "pbi-theme"
+_HOUSE_THEME_NAME = "HouseEditorial-ca31b320.json"
+
+
+def _register_house_theme(report_path: Path) -> list[str]:
+    """Copy the house theme into StaticResources/RegisteredResources and register
+    it in report.json's themeCollection + resourcePackages (idempotent — safe to
+    call on every build). Returns a list of warnings; empty on success. Desktop
+    owns report.json, so this only runs when pbip_report_path points at an
+    already-scaffolded .Report (see contracts/HOUSE_DESIGN_BRIEF.md § Registration)."""
+    theme_src = _HOUSE_THEME_DIR / _HOUSE_THEME_NAME
+    if not theme_src.is_file():
+        return [f"house theme asset not found at {theme_src}; skipping registration"]
+
+    report_json_path = report_path / "definition" / "report.json"
+    if not report_json_path.is_file():
+        return ["report.json not found (Desktop hasn't scaffolded this .Report yet) "
+                "— house theme not registered; copy it in manually after first save"]
+
+    rr_dir = report_path / "StaticResources" / "RegisteredResources"
+    rr_dir.mkdir(parents=True, exist_ok=True)
+    (rr_dir / _HOUSE_THEME_NAME).write_text(theme_src.read_text())
+
+    report_json = json.loads(report_json_path.read_text())
+    theme_collection = report_json.setdefault("themeCollection", {})
+    base_theme = theme_collection.get("baseTheme", {})
+    version_at_import = base_theme.get(
+        "reportVersionAtImport", {"visual": "5.61.0", "report": "5.61.0", "page": "5.61.0"})
+
+    theme_collection["customTheme"] = {
+        "name": _HOUSE_THEME_NAME,
+        "reportVersionAtImport": version_at_import,
+        "type": "RegisteredResources",
+    }
+
+    packages = report_json.setdefault("resourcePackages", [])
+    rr_package = next((p for p in packages if p.get("name") == "RegisteredResources"), None)
+    if rr_package is None:
+        rr_package = {"name": "RegisteredResources", "type": "RegisteredResources", "items": []}
+        packages.append(rr_package)
+    items = rr_package.setdefault("items", [])
+    if not any(i.get("name") == _HOUSE_THEME_NAME for i in items):
+        items.append({"name": _HOUSE_THEME_NAME, "path": _HOUSE_THEME_NAME, "type": "CustomTheme"})
+
+    report_json_path.write_text(json.dumps(report_json, indent=2))
+    return []
+
+
+# ---------------------------------------------------------------------------
 # Gate 1 — JSON validation
 # ---------------------------------------------------------------------------
 
@@ -476,6 +556,45 @@ def _gate1_validate(files: list[Path]) -> tuple[bool, list[str]]:
         except (json.JSONDecodeError, OSError) as e:
             errors.append(f"{f.name}: {e}")
     return (len(errors) == 0), errors
+
+
+# ---------------------------------------------------------------------------
+# Gate 1b — official CLI validation (@microsoft/powerbi-report-authoring-cli)
+# ---------------------------------------------------------------------------
+
+def _gate1b_cli_validate(report_path: Path) -> tuple[bool | None, list[str]]:
+    """Run `powerbi-report-author validate` against the .Report directory.
+
+    Returns (passed, messages). `passed` is None (not True/False) if the CLI
+    isn't installed — this is an optional, dev-time source-of-truth check (see
+    the bi-pipeline integration plan Phase 0/2), not a hard requirement for the
+    API to serve a build. Install: `npm install -g
+    @microsoft/powerbi-report-authoring-cli`.
+    """
+    if shutil.which("powerbi-report-author") is None:
+        return None, ["powerbi-report-author CLI not installed — skipping Gate 1b "
+                       "(npm install -g @microsoft/powerbi-report-authoring-cli)"]
+
+    try:
+        proc = subprocess.run(
+            ["powerbi-report-author", "validate", str(report_path)],
+            capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, [f"powerbi-report-author validate failed to run: {e}"]
+
+    try:
+        envelope = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return False, [f"could not parse validator output: {proc.stdout[:500]}"]
+
+    data = envelope.get("data", {})
+    passed = data.get("result") != "failed"  # "succeededWithWarnings" counts as passed
+    messages: list[str] = []
+    for code, group in data.get("diagnostics", {}).items():
+        for item in group.get("items", []):
+            messages.append(f"[{group.get('severity', '?')}] {code}: {item.get('message')}")
+    return passed, messages
 
 
 # ---------------------------------------------------------------------------
@@ -608,7 +727,7 @@ def run(build_id: str, pbip_report_path: str | None = None) -> dict:
             if skill is not None:
                 try:
                     built_visuals, built_tmdl = _skill_outputs(
-                        skill, v_spec, v_folder, measure_defs, dimension_defs)
+                        skill, v_spec, v_folder, measure_defs, dimension_defs, schema_url)
                     if built_visuals:
                         v_json = built_visuals[0]
                     for fname, tmdl_text in built_tmdl:
@@ -637,6 +756,18 @@ def run(build_id: str, pbip_report_path: str | None = None) -> dict:
     # Update pages.json
     _update_pages_json(pages_dir, new_page_names)
 
+    # House theme registration (no-op with a warning in scaffold mode — see
+    # contracts/HOUSE_DESIGN_BRIEF.md § Registration)
+    theme_warnings: list[str] = []
+    if pbip_report_path:
+        theme_warnings = _register_house_theme(Path(pbip_report_path))
+        if theme_warnings:
+            print(f"  [pbip_builder] {len(theme_warnings)} theme warning(s):")
+            for w in theme_warnings:
+                print(f"    {w}")
+        else:
+            print(f"  [pbip_builder] house theme registered ({_HOUSE_THEME_NAME})")
+
     # Gate 1 — JSON validation
     gate1_passed, gate1_errors = _gate1_validate(all_written)
     if gate1_passed:
@@ -655,6 +786,20 @@ def run(build_id: str, pbip_report_path: str | None = None) -> dict:
         for i in gate3_issues:
             print(f"    {i}")
 
+    # Gate 1b — official CLI validation (skipped in scaffold mode; optional/
+    # dev-time, see Phase 0 decision in the bi-pipeline integration plan)
+    gate1b_passed, gate1b_messages = (None, [])
+    if pbip_report_path:
+        gate1b_passed, gate1b_messages = _gate1b_cli_validate(Path(pbip_report_path))
+        if gate1b_passed is None:
+            print(f"  [pbip_builder] Gate 1b — skipped: {gate1b_messages[0]}")
+        elif gate1b_passed:
+            print("  [pbip_builder] Gate 1b ✓ — powerbi-report-author validate passed")
+        else:
+            print(f"  [pbip_builder] Gate 1b ✗ — {len(gate1b_messages)} issue(s):")
+            for m in gate1b_messages:
+                print(f"    {m}")
+
     if skill_warnings:
         print(f"  [pbip_builder] {len(skill_warnings)} skill warning(s):")
         for w in skill_warnings:
@@ -665,8 +810,10 @@ def run(build_id: str, pbip_report_path: str | None = None) -> dict:
         "files_written": len(all_written),
         "output_dir": str(pages_dir),
         "gate1": {"passed": gate1_passed, "errors": gate1_errors},
+        "gate1b": {"passed": gate1b_passed, "messages": gate1b_messages},
         "gate3": {"passed": gate3_passed, "issues": gate3_issues},
         "skill_warnings": skill_warnings,
+        "theme_warnings": theme_warnings,
         "schema_version_used": schema_url,
         "tmdl_fragments": tmdl_fragments,  # [(filename, content)] for SemanticModel
     }
