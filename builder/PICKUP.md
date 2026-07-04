@@ -166,10 +166,15 @@ instead of hand-guessed schema versions. What changed:
    guidelines (installed in this session as the `powerbi-authoring:*` skills).
 4. **More golden pages.** `examples/retail/` encodes pages 1–2; pages 3–4 follow the same
    pattern if you want a fuller regression fixture.
-5. **Fabric publish / Desktop-bridge automation.** Backlog — see the bi-pipeline integration
-   plan's Phase 4. Not started; gated on whether a client needs Fabric-hosted delivery, and on
-   Windows-machine availability for the Desktop bridge (it's a named-pipe bridge to Desktop,
-   which is Windows-only — this doesn't change with the official CLI).
+5. **Desktop-bridge automation (optional, low priority).** `powerbi-desktop reload`/`screenshot`
+   could script Gate 2 on the existing Windows machine instead of doing it by hand. Still
+   Windows-only (named-pipe bridge to Desktop) — doesn't change with the official CLI. Not
+   started.
+
+**Explicitly out of scope (Calvin's call, 2026-07-04): no Fabric publish.** The product only
+generates a local `.pbip`/PBIR output — it does not publish to a Fabric workspace and never
+should. `powerbi-report-management` (the Microsoft skill that does Fabric REST CRUD) is
+deliberately not integrated. Do not add this without Calvin explicitly asking again.
 
 ## Map of the code
 
