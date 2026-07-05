@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { gsap } from 'gsap'
-import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin, Link } from 'lucide-react'
+import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin, Link, RotateCcw } from 'lucide-react'
 import SetupPanels from './SetupPanels'
 
 const AGENT_LABEL        = 'BI Wireframe Agent'
@@ -108,7 +108,7 @@ function AgentMessage({ msg }) {
   )
 }
 
-function UserMessage({ msg }) {
+function UserMessage({ msg, onRerun, isIdle }) {
   const ref = useRef(null)
   const [expanded, setExpanded] = useState(false)
   useEffect(() => {
@@ -119,7 +119,7 @@ function UserMessage({ msg }) {
 
   return (
     <div ref={ref} className="flex justify-end">
-      <div className="max-w-[75%]">
+      <div className="max-w-[75%] group">
         <div
           className={`bg-ink text-paper rounded-2xl rounded-tr-sm px-4 py-3 ${isStructured ? 'cursor-pointer' : ''}`}
           onClick={() => isStructured && setExpanded((v) => !v)}
@@ -134,7 +134,19 @@ function UserMessage({ msg }) {
               : msg.text}
           </p>
         </div>
-        <p className="font-mono text-[9px] text-muted mt-1 text-right">{msg.time}</p>
+        <div className="flex items-center justify-end gap-1.5 mt-1">
+          {isStructured && (
+            <button
+              onClick={() => onRerun(msg.text)}
+              disabled={!isIdle}
+              title="Rerun in a new conversation"
+              className="p-0.5 text-muted/70 hover:text-red transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-0"
+            >
+              <RotateCcw size={11} />
+            </button>
+          )}
+          <p className="font-mono text-[9px] text-muted">{msg.time}</p>
+        </div>
       </div>
     </div>
   )
@@ -943,9 +955,13 @@ export default function ChatInterface() {
     fetchHistory(sid)
   }, [fetchHistory])
 
-  const createNewSession = useCallback(async () => {
-    if (creatingSession) return
+  // Shared by "New" (empty new conversation) and "Rerun" (new conversation
+  // that immediately replays a prior prompt) — returns the new session id
+  // (or null on failure) so callers can chain a dispatchToAgent onto it.
+  const createSessionAndSwitch = useCallback(async () => {
+    if (creatingSession) return null
     setCreatingSession(true)
+    let newSessionId = null
     try {
       const res  = await fetch('/api/session/new', {
         method:  'POST',
@@ -961,16 +977,24 @@ export default function ChatInterface() {
         saveStorage(updated, data.sessionId)
         return updated
       })
+      // Sync the ref synchronously (not just the state setter) so an
+      // immediately-following dispatchToAgent call targets the new session
+      // rather than a stale value from before this render commits.
+      activeSessionIdRef.current = data.sessionId
       setActiveSessionId(data.sessionId)
       setMessages([])
       setLastTurnUsage(null)
       setInput('')
       setHistoryLoading(false)
+      newSessionId = data.sessionId
     } catch (err) {
       console.error('Failed to create session:', err)
     }
     setCreatingSession(false)
+    return newSessionId
   }, [creatingSession])
+
+  const createNewSession = useCallback(() => createSessionAndSwitch(), [createSessionAndSwitch])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode)
@@ -1182,6 +1206,16 @@ export default function ChatInterface() {
     }
   }, [])
 
+  // Replays a prior structured prompt in a brand-new conversation — the
+  // closest equivalent to a "regenerate" button this app can support, since
+  // Managed Agents sessions have no fork/rewind primitive to regenerate a
+  // later turn in place (see the "rerun" plan for why).
+  const rerunPrompt = useCallback(async (text) => {
+    if (agentStatus !== 'idle') return
+    const sid = await createSessionAndSwitch()
+    if (sid) await dispatchToAgent(text)
+  }, [agentStatus, createSessionAndSwitch, dispatchToAgent])
+
   const sendMessage = useCallback(async () => {
     if (agentStatus !== 'idle') return
 
@@ -1306,7 +1340,7 @@ export default function ChatInterface() {
 
             <div className="flex flex-col gap-5">
               {messages.map((msg) =>
-                msg.role === 'user'      ? <UserMessage       key={msg.id} msg={msg} /> :
+                msg.role === 'user'      ? <UserMessage       key={msg.id} msg={msg} onRerun={rerunPrompt} isIdle={isIdle} /> :
                 msg.role === 'compacted' ? <CompactionMarker  key={msg.id} msg={msg} /> :
                                            <AgentMessage      key={msg.id} msg={msg} />
               )}
