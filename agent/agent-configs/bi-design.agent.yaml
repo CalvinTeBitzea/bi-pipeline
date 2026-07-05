@@ -67,3 +67,17 @@ tools:
         enabled: true
       - name: read
         enabled: true
+      - name: glob
+        enabled: true
+      - name: grep
+        enabled: true
+
+# Memory addendum (appended live via fix_memory_read.py, kept here for
+# reference so the file matches the live agent):
+#
+# ## Memory
+#
+# Before generating dashboard_spec.json/semantic_model.json, use the `glob`
+# tool to list every file under /mnt/memory/bi-pipeline-lessons/, then `grep`
+# them for relevant keywords before reading. Covers ALL mistake categories
+# (required fields, IR shape), not just visual-type/DAX patterns.

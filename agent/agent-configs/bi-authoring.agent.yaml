@@ -40,6 +40,24 @@ system: |
   you tell it, not your own reasoning. A vague "something's wrong with the
   scatter chart" is much less useful than quoting the actual gate error.
 tools:
+  - type: agent_toolset_20260401
+    default_config:
+      enabled: false
+    configs:
+      # read/write/edit were previously granted by an undocumented implicit
+      # baseline (this agent had no agent_toolset block at all and could
+      # still read/write files) -- listed explicitly now, alongside
+      # glob/grep, so this block can't accidentally narrow them.
+      - name: read
+        enabled: true
+      - name: write
+        enabled: true
+      - name: edit
+        enabled: true
+      - name: glob
+        enabled: true
+      - name: grep
+        enabled: true
   - type: custom
     name: validate_ir
     description: >
@@ -56,3 +74,12 @@ tools:
       required:
         - dashboard_spec
         - semantic_model
+
+# Memory addendum (appended live via fix_memory_read.py, kept here for
+# reference so the file matches the live agent):
+#
+# ## Memory
+#
+# Before writing a new lesson, glob-list then grep-search existing lesson
+# files for the same mistake category; overwrite (write) an existing match
+# rather than creating an overlapping new file.
