@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { gsap } from 'gsap'
-import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin, Link } from 'lucide-react'
+import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin, Link, Activity } from 'lucide-react'
 import SetupPanels from './SetupPanels'
 
 const AGENT_LABEL        = 'BI Wireframe Agent'
@@ -292,6 +292,74 @@ function PreviewPanel({ file, onClose }) {
                   {file.content ?? ''}
                 </pre>
               )}
+            </div>
+          )}
+        </div>
+
+      </div>
+    </div>
+  )
+}
+
+// ─── Activity panel ───────────────────────────────────────────────────────────
+
+function ActivityEntry({ entry }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    gsap.from(ref.current, { opacity: 0, y: 4, duration: 0.25, ease: 'power2.out' })
+  }, [])
+
+  const label =
+    entry.action === 'started' ? `${entry.agent} started`
+      : entry.action === 'tool_call' ? `${entry.agent} → ${entry.detail}`
+        : `${entry.agent} ${entry.action}`
+
+  return (
+    <div ref={ref} className="flex items-start gap-2 py-1">
+      <span className="font-mono text-[9px] text-muted/60 flex-shrink-0 mt-0.5 tabular-nums">{entry.time}</span>
+      <span className="font-mono text-[11px] text-ink leading-snug">{label}</span>
+    </div>
+  )
+}
+
+function ActivityPanel({ open, onClose, entries }) {
+  const panelRef = useRef(null)
+  const bodyRef  = useRef(null)
+
+  useEffect(() => {
+    if (open) gsap.from(panelRef.current, { x: 24, opacity: 0, duration: 0.3, ease: 'power3.out' })
+  }, [open])
+
+  useEffect(() => {
+    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' })
+  }, [entries.length])
+
+  if (!open) return null
+
+  return (
+    <div className="w-[340px] flex-shrink-0 flex h-full overflow-hidden">
+      <div ref={panelRef} className="flex-1 flex flex-col border-l border-ink/10 bg-offwhite overflow-hidden">
+
+        <div className="flex items-center justify-between px-4 py-3 border-b border-ink/10 bg-surface/50 flex-shrink-0">
+          <p className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted leading-none">
+            Activity
+          </p>
+          <button
+            onClick={onClose}
+            className="flex-shrink-0 p-1 text-muted/70 hover:text-red transition-colors rounded"
+          >
+            <X size={13} />
+          </button>
+        </div>
+
+        <div ref={bodyRef} className="flex-1 overflow-y-auto px-4 py-3">
+          {entries.length === 0 ? (
+            <p className="font-mono text-[11px] text-muted/60 leading-relaxed">
+              Subagent activity (delegations, tool calls, validation results) appears here as the pipeline runs.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              {entries.map((e) => <ActivityEntry key={e.id} entry={e} />)}
             </div>
           )}
         </div>
@@ -619,7 +687,7 @@ function ConversationHeader({ name, fallback, onRename }) {
 
 function fmtTok(n) { return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n) }
 
-function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onLinkSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, onRenameSession, onPinSession }) {
+function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onLinkSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, activityPanelOpen, onToggleActivity, onRenameSession, onPinSession }) {
   const ref = useRef(null)
   const [sessionUsage, setSessionUsage]   = useState(null)
   const [usageFetched, setUsageFetched]   = useState(false)
@@ -679,13 +747,22 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
               <p className="font-grotesk font-bold text-[14px] text-ink leading-tight truncate">{AGENT_LABEL}</p>
             </div>
           </div>
-          <button
-            onClick={onToggleDark}
-            title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
-            className="flex-shrink-0 p-1 text-muted/60 hover:text-ink transition-colors rounded"
-          >
-            {darkMode ? <Sun size={12} /> : <Moon size={12} />}
-          </button>
+          <div className="flex-shrink-0 flex items-center gap-0.5">
+            <button
+              onClick={onToggleActivity}
+              title={activityPanelOpen ? 'Hide activity log' : 'Show activity log'}
+              className={`p-1 transition-colors rounded ${activityPanelOpen ? 'text-red' : 'text-muted/60 hover:text-ink'}`}
+            >
+              <Activity size={12} />
+            </button>
+            <button
+              onClick={onToggleDark}
+              title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="p-1 text-muted/60 hover:text-ink transition-colors rounded"
+            >
+              {darkMode ? <Sun size={12} /> : <Moon size={12} />}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -817,6 +894,10 @@ export default function ChatInterface() {
   const [darkMode, setDarkMode]             = useState(() => {
     try { return localStorage.getItem('bi_dark') === '1' } catch { return false }
   })
+  const [activityLog, setActivityLog]       = useState([])
+  const [activityPanelOpen, setActivityPanelOpen] = useState(() => {
+    try { return localStorage.getItem('bi_activity_open') !== '0' } catch { return true }
+  })
 
   const bottomRef    = useRef(null)
   const bodyRef      = useRef(null)
@@ -830,8 +911,8 @@ export default function ChatInterface() {
     setHistoryLoading(true)
     try {
       const data = await fetch(`/api/session-history?sessionId=${sid}`).then(r => r.json())
-      if (data.messages?.length) setMessages(data.messages)
-      else setMessages([])
+      setMessages(data.messages?.length ? data.messages : [])
+      setActivityLog(data.activity?.length ? data.activity : [])
     } catch {}
     setHistoryLoading(false)
   }, [])
@@ -857,6 +938,7 @@ export default function ChatInterface() {
     if (sid === activeSessionIdRef.current) return
     setActiveSessionId(sid)
     setMessages([])
+    setActivityLog([])
     setLastTurnUsage(null)
     setInput('')
     setSessions(prev => {
@@ -887,6 +969,7 @@ export default function ChatInterface() {
       })
       setActiveSessionId(data.sessionId)
       setMessages([])
+      setActivityLog([])
       setLastTurnUsage(null)
       setInput('')
       setHistoryLoading(false)
@@ -902,6 +985,12 @@ export default function ChatInterface() {
   }, [darkMode])
 
   const toggleDark = useCallback(() => setDarkMode(d => !d), [])
+
+  useEffect(() => {
+    try { localStorage.setItem('bi_activity_open', activityPanelOpen ? '1' : '0') } catch {}
+  }, [activityPanelOpen])
+
+  const toggleActivityPanel = useCallback(() => setActivityPanelOpen(v => !v), [])
 
   const renameSession = useCallback((id, name) => {
     setSessions(prev => {
@@ -1051,6 +1140,11 @@ export default function ChatInterface() {
             setAgentStatus('thinking'); setThinkHint(data.hint || 'thinking')
           } else if (data.type === 'tool') {
             setAgentStatus('thinking'); setThinkHint(data.name ? `Using ${data.name}` : 'tool')
+          } else if (data.type === 'activity') {
+            setActivityLog((prev) => [...prev, {
+              id: `${Date.now()}-${prev.length}`, time: ts(),
+              agent: data.agent, action: data.action, detail: data.detail,
+            }])
           } else if (data.type === 'usage') {
             const a = turnUsageAccum.current
             a.input    += data.input    ?? 0
@@ -1175,6 +1269,8 @@ export default function ChatInterface() {
         onRegenerateFiles={regenerateFiles}
         darkMode={darkMode}
         onToggleDark={toggleDark}
+        activityPanelOpen={activityPanelOpen}
+        onToggleActivity={toggleActivityPanel}
         onRenameSession={renameSession}
         onPinSession={pinSession}
       />
@@ -1256,6 +1352,8 @@ export default function ChatInterface() {
         </div>
 
       </div>
+
+      <ActivityPanel open={activityPanelOpen} onClose={() => setActivityPanelOpen(false)} entries={activityLog} />
 
       <PreviewPanel file={previewFile} onClose={() => setPreviewFile(null)} />
 

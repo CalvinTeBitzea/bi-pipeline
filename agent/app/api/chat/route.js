@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { summarizeValidateResult } from '../../../lib/activity'
 
 const DEFAULT_SESSION_ID = process.env.REFERENCE_SESSION_ID || 'sesn_01S3zW6pLxWnwyxZ9rmB6tZB'
 const BETA               = 'managed-agents-2026-04-01'
@@ -24,13 +25,11 @@ async function runValidateIr(input) {
         semantic_model: input.semantic_model,
       }),
     })
-    const body = await res.json()
-    return { text: JSON.stringify(body), isError: false }
+    const parsed = await res.json()
+    return { text: JSON.stringify(parsed), isError: false, parsed }
   } catch (err) {
-    return {
-      text: JSON.stringify({ valid: false, error: err?.message ?? String(err) }),
-      isError: true,
-    }
+    const parsed = { valid: false, error: err?.message ?? String(err) }
+    return { text: JSON.stringify(parsed), isError: true, parsed }
   }
 }
 
@@ -53,6 +52,11 @@ export async function POST(request) {
       const send = (data) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
 
+      // session_thread_id -> agent_name, populated as subagent threads spin up,
+      // so tool-use events (which carry a thread id but not the agent name) can
+      // be attributed correctly in the activity log.
+      const threadAgentNames = {}
+
       try {
         const stream = await client.beta.sessions.events.stream(SESSION_ID, { betas: [BETA] })
 
@@ -66,15 +70,19 @@ export async function POST(request) {
             send({ type: 'thinking' })
           } else if (t === 'agent.tool_use') {
             send({ type: 'tool', name: event.name ?? 'tool' })
+            const agent = threadAgentNames[event.session_thread_id] ?? 'coordinator'
+            send({ type: 'activity', agent, action: 'tool_call', detail: event.name ?? 'tool' })
           } else if (t === 'agent.custom_tool_use') {
             // bi-authoring's validate_ir tool — call the deterministic builder
             // host-side, then answer via user.custom_tool_result so the
             // session can resume. Echo session_thread_id so the result routes
             // back to the originating subagent thread, not just the primary.
             send({ type: 'tool', name: event.name ?? 'validate_ir' })
+            const agent = threadAgentNames[event.session_thread_id] ?? 'coordinator'
 
             if (event.name === 'validate_ir') {
-              const { text, isError } = await runValidateIr(event.input ?? {})
+              const { text, isError, parsed } = await runValidateIr(event.input ?? {})
+              send({ type: 'activity', agent, action: 'tool_call', detail: `validate_ir → ${summarizeValidateResult(parsed)}` })
               await client.beta.sessions.events.send(SESSION_ID, {
                 events: [{
                   type:               'user.custom_tool_result',
@@ -85,8 +93,15 @@ export async function POST(request) {
                 }],
                 betas: [BETA],
               })
+            } else {
+              send({ type: 'activity', agent, action: 'tool_call', detail: event.name ?? 'tool' })
             }
-          } else if (t === 'session.thread_created' || t === 'session.thread_status_running') {
+          } else if (t === 'session.thread_created') {
+            threadAgentNames[event.session_thread_id] = event.agent_name
+            const hint = SUBAGENT_HINTS[event.agent_name] ?? `${event.agent_name ?? 'subagent'} working…`
+            send({ type: 'thinking', hint })
+            send({ type: 'activity', agent: event.agent_name, action: 'started' })
+          } else if (t === 'session.thread_status_running') {
             const hint = SUBAGENT_HINTS[event.agent_name] ?? `${event.agent_name ?? 'subagent'} working…`
             send({ type: 'thinking', hint })
           } else if (t === 'span.model_request_end') {
