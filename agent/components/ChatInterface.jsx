@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { gsap } from 'gsap'
-import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin, Link, Activity } from 'lucide-react'
+import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin, Link } from 'lucide-react'
 import SetupPanels from './SetupPanels'
 
 const AGENT_LABEL        = 'BI Wireframe Agent'
@@ -42,16 +42,34 @@ function formatMarkdown(text) {
 
 // ─── Messages ────────────────────────────────────────────────────────────────
 
+function NarrationLine({ entry }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    gsap.from(ref.current, { opacity: 0, y: 4, duration: 0.25, ease: 'power2.out' })
+  }, [])
+
+  return (
+    <div ref={ref} className="flex items-start gap-2 py-0.5">
+      <span className="font-mono text-[9px] text-muted/60 flex-shrink-0 mt-0.5 tabular-nums">{entry.time}</span>
+      <span className="font-mono text-[11px] text-ink/80 leading-snug">
+        <span className="text-muted">{entry.agent}:</span> {entry.text}
+      </span>
+    </div>
+  )
+}
+
 function AgentMessage({ msg }) {
   const ref = useRef(null)
+  const [narrationOpen, setNarrationOpen] = useState(false)
   useEffect(() => {
     gsap.from(ref.current, { x: -10, opacity: 0, duration: 0.4, ease: 'power3.out' })
   }, [])
 
   const u     = msg.usage
   const hasU  = u && u.input > 0
-  const hit   = hasU && u.cacheRead > 0 ? Math.round(u.cacheRead / u.input * 100) : 0
+  const hit   = hasU && u.cacheRead > 0 ? Math.round(u.cacheRead / (u.input + u.cacheRead) * 100) : 0
   const fmtT  = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+  const narration = msg.narration ?? []
 
   return (
     <div ref={ref} className="flex gap-3">
@@ -71,7 +89,20 @@ function AgentMessage({ msg }) {
               {fmtT(u.input)}↓ {fmtT(u.output)}↑{hit > 0 ? ` · ${hit}% cached` : ''}
             </p>
           )}
+          {narration.length > 0 && (
+            <button
+              onClick={() => setNarrationOpen((v) => !v)}
+              className="font-mono text-[9px] text-muted/60 hover:text-red transition-colors"
+            >
+              {narrationOpen ? '▾' : '▸'} {narration.length} step{narration.length === 1 ? '' : 's'}
+            </button>
+          )}
         </div>
+        {narrationOpen && narration.length > 0 && (
+          <div className="flex flex-col gap-0.5 mt-2 pl-3 border-l border-ink/10">
+            {narration.map((n, i) => <NarrationLine key={i} entry={n} />)}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -146,6 +177,15 @@ function ThinkingBubble({ hint }) {
           />
         ))}
       </div>
+    </div>
+  )
+}
+
+function LiveNarration({ entries }) {
+  if (!entries.length) return null
+  return (
+    <div className="flex flex-col gap-0.5 pl-8">
+      {entries.map((e, i) => <NarrationLine key={i} entry={e} />)}
     </div>
   )
 }
@@ -292,74 +332,6 @@ function PreviewPanel({ file, onClose }) {
                   {file.content ?? ''}
                 </pre>
               )}
-            </div>
-          )}
-        </div>
-
-      </div>
-    </div>
-  )
-}
-
-// ─── Activity panel ───────────────────────────────────────────────────────────
-
-function ActivityEntry({ entry }) {
-  const ref = useRef(null)
-  useEffect(() => {
-    gsap.from(ref.current, { opacity: 0, y: 4, duration: 0.25, ease: 'power2.out' })
-  }, [])
-
-  const label =
-    entry.action === 'started' ? `${entry.agent} started`
-      : entry.action === 'tool_call' ? `${entry.agent} → ${entry.detail}`
-        : `${entry.agent} ${entry.action}`
-
-  return (
-    <div ref={ref} className="flex items-start gap-2 py-1">
-      <span className="font-mono text-[9px] text-muted/60 flex-shrink-0 mt-0.5 tabular-nums">{entry.time}</span>
-      <span className="font-mono text-[11px] text-ink leading-snug">{label}</span>
-    </div>
-  )
-}
-
-function ActivityPanel({ open, onClose, entries }) {
-  const panelRef = useRef(null)
-  const bodyRef  = useRef(null)
-
-  useEffect(() => {
-    if (open) gsap.from(panelRef.current, { x: 24, opacity: 0, duration: 0.3, ease: 'power3.out' })
-  }, [open])
-
-  useEffect(() => {
-    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' })
-  }, [entries.length])
-
-  if (!open) return null
-
-  return (
-    <div className="w-[340px] flex-shrink-0 flex h-full overflow-hidden">
-      <div ref={panelRef} className="flex-1 flex flex-col border-l border-ink/10 bg-offwhite overflow-hidden">
-
-        <div className="flex items-center justify-between px-4 py-3 border-b border-ink/10 bg-surface/50 flex-shrink-0">
-          <p className="font-mono text-[8px] tracking-[0.15em] uppercase text-muted leading-none">
-            Activity
-          </p>
-          <button
-            onClick={onClose}
-            className="flex-shrink-0 p-1 text-muted/70 hover:text-red transition-colors rounded"
-          >
-            <X size={13} />
-          </button>
-        </div>
-
-        <div ref={bodyRef} className="flex-1 overflow-y-auto px-4 py-3">
-          {entries.length === 0 ? (
-            <p className="font-mono text-[11px] text-muted/60 leading-relaxed">
-              Subagent activity (delegations, tool calls, validation results) appears here as the pipeline runs.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-0.5">
-              {entries.map((e) => <ActivityEntry key={e.id} entry={e} />)}
             </div>
           )}
         </div>
@@ -687,9 +659,22 @@ function ConversationHeader({ name, fallback, onRename }) {
 
 function fmtTok(n) { return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n) }
 
-function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onLinkSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, activityPanelOpen, onToggleActivity, onRenameSession, onPinSession }) {
+function fmtDuration(sec) {
+  if (!sec || sec < 1) return '0s'
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = Math.round(sec % 60)
+  if (h > 0) return `${h}h ${m}m`
+  if (m > 0) return `${m}m ${s}s`
+  return `${s}s`
+}
+
+function fmtCost(n) { return n == null ? '—' : `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}` }
+
+function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onLinkSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, onRenameSession, onPinSession }) {
   const ref = useRef(null)
   const [sessionUsage, setSessionUsage]   = useState(null)
+  const [runCost, setRunCost]             = useState(null)
   const [usageFetched, setUsageFetched]   = useState(false)
 
   useEffect(() => {
@@ -699,6 +684,7 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
   // Reset usage state when active session changes
   useEffect(() => {
     setSessionUsage(null)
+    setRunCost(null)
     setUsageFetched(false)
   }, [activeSessionId])
 
@@ -707,6 +693,7 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
       const res  = await fetch(`/api/session-usage?sessionId=${activeSessionId}`)
       const data = await res.json()
       if (data.usage) setSessionUsage(data.usage)
+      if (data.cost) setRunCost({ elapsedSeconds: data.elapsedSeconds, ...data.cost })
       setUsageFetched(true)
     } catch {}
   }, [activeSessionId])
@@ -720,12 +707,12 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
   const sessCacheR = sessionUsage?.cache_read_input_tokens ?? 0
   const sessCacheW = (sessionUsage?.cache_creation?.ephemeral_5m_input_tokens ?? 0) +
                      (sessionUsage?.cache_creation?.ephemeral_1h_input_tokens  ?? 0)
-  const sessHit   = sessIn > 0 ? Math.round(sessCacheR / sessIn * 100) : 0
+  const sessHit   = (sessIn + sessCacheR) > 0 ? Math.round(sessCacheR / (sessIn + sessCacheR) * 100) : 0
 
   const ltIn      = lastTurnUsage?.input ?? 0
   const ltOut     = lastTurnUsage?.output ?? 0
   const ltCacheR  = lastTurnUsage?.cacheRead ?? 0
-  const ltHit     = ltIn > 0 ? Math.round(ltCacheR / ltIn * 100) : 0
+  const ltHit     = (ltIn + ltCacheR) > 0 ? Math.round(ltCacheR / (ltIn + ltCacheR) * 100) : 0
 
   return (
     <aside ref={ref} className="w-80 flex-shrink-0 flex flex-col bg-offwhite border-r border-ink/10">
@@ -748,13 +735,6 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
             </div>
           </div>
           <div className="flex-shrink-0 flex items-center gap-0.5">
-            <button
-              onClick={onToggleActivity}
-              title={activityPanelOpen ? 'Hide activity log' : 'Show activity log'}
-              className={`p-1 transition-colors rounded ${activityPanelOpen ? 'text-red' : 'text-muted/60 hover:text-ink'}`}
-            >
-              <Activity size={12} />
-            </button>
             <button
               onClick={onToggleDark}
               title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -835,6 +815,24 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
             <p className="font-mono text-[11px] text-muted leading-relaxed">Stats appear after first run.</p>
           ) : (
             <>
+              {runCost && (
+                <div className="mb-3 pb-3 border-b border-ink/10">
+                  <p className="font-mono text-[10px] text-muted uppercase tracking-wider mb-1">This conversation</p>
+                  <p className="font-mono text-[13px] text-ink font-medium">
+                    {fmtDuration(runCost.elapsedSeconds)} · {fmtCost(runCost.total)}
+                  </p>
+                  {runCost.byAgent && Object.keys(runCost.byAgent).length > 1 && (
+                    <ul className="mt-1.5 flex flex-col gap-0.5">
+                      {Object.entries(runCost.byAgent).map(([name, a]) => (
+                        <li key={name} className="flex items-center justify-between font-mono text-[10px] text-muted">
+                          <span className="truncate">{name}</span>
+                          <span className="flex-shrink-0 ml-2">{fmtTok(a.input + a.output)} tok · {fmtCost(a.cost)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
               {lastTurnUsage && ltIn > 0 && (
                 <div className="mb-3">
                   <p className="font-mono text-[10px] text-muted uppercase tracking-wider mb-1">Last turn</p>
@@ -894,16 +892,14 @@ export default function ChatInterface() {
   const [darkMode, setDarkMode]             = useState(() => {
     try { return localStorage.getItem('bi_dark') === '1' } catch { return false }
   })
-  const [activityLog, setActivityLog]       = useState([])
-  const [activityPanelOpen, setActivityPanelOpen] = useState(() => {
-    try { return localStorage.getItem('bi_activity_open') !== '0' } catch { return true }
-  })
+  const [liveNarration, setLiveNarration] = useState([])
 
   const bottomRef    = useRef(null)
   const bodyRef      = useRef(null)
   const inputAreaRef = useRef(null)
   const textareaRef  = useRef(null)
   const turnUsageAccum     = useRef({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+  const turnNarrationAccum = useRef([])
   const activeSessionIdRef = useRef(activeSessionId)
   useEffect(() => { activeSessionIdRef.current = activeSessionId }, [activeSessionId])
 
@@ -912,7 +908,6 @@ export default function ChatInterface() {
     try {
       const data = await fetch(`/api/session-history?sessionId=${sid}`).then(r => r.json())
       setMessages(data.messages?.length ? data.messages : [])
-      setActivityLog(data.activity?.length ? data.activity : [])
     } catch {}
     setHistoryLoading(false)
   }, [])
@@ -938,7 +933,6 @@ export default function ChatInterface() {
     if (sid === activeSessionIdRef.current) return
     setActiveSessionId(sid)
     setMessages([])
-    setActivityLog([])
     setLastTurnUsage(null)
     setInput('')
     setSessions(prev => {
@@ -969,7 +963,6 @@ export default function ChatInterface() {
       })
       setActiveSessionId(data.sessionId)
       setMessages([])
-      setActivityLog([])
       setLastTurnUsage(null)
       setInput('')
       setHistoryLoading(false)
@@ -985,12 +978,6 @@ export default function ChatInterface() {
   }, [darkMode])
 
   const toggleDark = useCallback(() => setDarkMode(d => !d), [])
-
-  useEffect(() => {
-    try { localStorage.setItem('bi_activity_open', activityPanelOpen ? '1' : '0') } catch {}
-  }, [activityPanelOpen])
-
-  const toggleActivityPanel = useCallback(() => setActivityPanelOpen(v => !v), [])
 
   const renameSession = useCallback((id, name) => {
     setSessions(prev => {
@@ -1091,7 +1078,7 @@ export default function ChatInterface() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, agentStatus])
+  }, [messages, agentStatus, liveNarration])
 
 
   const resizeTextarea = useCallback(() => {
@@ -1106,6 +1093,8 @@ export default function ChatInterface() {
     setAgentStatus('thinking')
     setThinkHint('thinking')
     turnUsageAccum.current = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+    turnNarrationAccum.current = []
+    setLiveNarration([])
 
     const userMsg  = { role: 'user',  text, time: ts(), id: Date.now() }
     const agentId  = Date.now() + 1
@@ -1140,11 +1129,10 @@ export default function ChatInterface() {
             setAgentStatus('thinking'); setThinkHint(data.hint || 'thinking')
           } else if (data.type === 'tool') {
             setAgentStatus('thinking'); setThinkHint(data.name ? `Using ${data.name}` : 'tool')
-          } else if (data.type === 'activity') {
-            setActivityLog((prev) => [...prev, {
-              id: `${Date.now()}-${prev.length}`, time: ts(),
-              agent: data.agent, action: data.action, detail: data.detail,
-            }])
+          } else if (data.type === 'narration') {
+            const line = { agent: data.agent, text: data.text, time: ts() }
+            turnNarrationAccum.current = [...turnNarrationAccum.current, line]
+            setLiveNarration(turnNarrationAccum.current)
           } else if (data.type === 'usage') {
             const a = turnUsageAccum.current
             a.input    += data.input    ?? 0
@@ -1158,10 +1146,13 @@ export default function ChatInterface() {
             )
           } else if (data.type === 'done') {
             const finalUsage = { ...turnUsageAccum.current }
+            const finalNarration = [...turnNarrationAccum.current]
             setLastTurnUsage(finalUsage)
             setMessages((prev) =>
-              prev.map((m) => (m.id === agentId ? { ...m, streaming: false, usage: finalUsage } : m))
+              prev.map((m) => (m.id === agentId ? { ...m, streaming: false, usage: finalUsage, narration: finalNarration } : m))
             )
+            turnNarrationAccum.current = []
+            setLiveNarration([])
             setAgentStatus('idle')
           } else if (data.type === 'error') {
             setMessages((prev) =>
@@ -1171,6 +1162,8 @@ export default function ChatInterface() {
                   : m
               )
             )
+            turnNarrationAccum.current = []
+            setLiveNarration([])
             setAgentStatus('idle')
           }
         }
@@ -1183,6 +1176,8 @@ export default function ChatInterface() {
             : m
         )
       )
+      turnNarrationAccum.current = []
+      setLiveNarration([])
       setAgentStatus('idle')
     }
   }, [])
@@ -1269,8 +1264,6 @@ export default function ChatInterface() {
         onRegenerateFiles={regenerateFiles}
         darkMode={darkMode}
         onToggleDark={toggleDark}
-        activityPanelOpen={activityPanelOpen}
-        onToggleActivity={toggleActivityPanel}
         onRenameSession={renameSession}
         onPinSession={pinSession}
       />
@@ -1317,6 +1310,7 @@ export default function ChatInterface() {
                 msg.role === 'compacted' ? <CompactionMarker  key={msg.id} msg={msg} /> :
                                            <AgentMessage      key={msg.id} msg={msg} />
               )}
+              {liveNarration.length > 0 && <LiveNarration entries={liveNarration} />}
               {showThinking && <ThinkingBubble hint={thinkHint} />}
             </div>
 
@@ -1352,8 +1346,6 @@ export default function ChatInterface() {
         </div>
 
       </div>
-
-      <ActivityPanel open={activityPanelOpen} onClose={() => setActivityPanelOpen(false)} entries={activityLog} />
 
       <PreviewPanel file={previewFile} onClose={() => setPreviewFile(null)} />
 
