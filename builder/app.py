@@ -72,3 +72,46 @@ def build():
         response = jsonify({"error": str(exc)})
         response.status_code = 500
         return _cors(response)
+
+
+@app.route("/api/validate", methods=["OPTIONS"])
+def validate_preflight():
+    return _cors(app.response_class("", 200))
+
+
+@app.route("/api/validate", methods=["POST"])
+def validate():
+    """
+    Validate dashboard_spec.json + semantic_model.json against the real build
+    gates without producing a PBIP — the bi-authoring subagent's tool. Runs the
+    same ingest + Gate 1 + Gate 3 checks as /api/build, returns JSON instead of
+    a zip, and always cleans up its artifact directory. Gate 1b (the official
+    CLI validator) is out of scope here — it needs a Desktop-scaffolded
+    .Report folder and the CLI installed alongside this Vercel runtime, which
+    remains unproven (see builder/PICKUP.md).
+    """
+    build_id = "validate_" + uuid.uuid4().hex[:8]
+    try:
+        body  = request.get_json(force=True)
+        spec  = body["dashboard_spec"]
+        model = body["semantic_model"]
+
+        ingest_result = ingest_agent.run(build_id, spec, model)
+        result = pbip_agent.run(build_id)
+
+        return _cors(jsonify({
+            "valid": (
+                result["gate1"]["passed"]
+                and result["gate3"]["passed"]
+                and not ingest_result["issues"]
+            ),
+            "ingest_issues": ingest_result["issues"],
+            "gate1": result["gate1"],
+            "gate3": result["gate3"],
+        }))
+    except Exception as exc:
+        # Tool-result shape, not an HTTP error — the calling agent reads
+        # `valid`/`error` from the body regardless of status code.
+        return _cors(jsonify({"valid": False, "error": str(exc)}))
+    finally:
+        shutil.rmtree(artifact_path(build_id, ""), ignore_errors=True)

@@ -127,12 +127,16 @@ function ThinkingBubble({ hint }) {
     gsap.from(ref.current, { x: -10, opacity: 0, duration: 0.3, ease: 'power3.out' })
   }, [])
 
+  // 'thinking'/'tool' are the generic defaults; anything else (e.g. a
+  // subagent-specific hint like "bi-design generating…") is shown verbatim.
+  const label = hint === 'tool' ? 'Using tool' : hint === 'thinking' || !hint ? 'Thinking' : hint
+
   return (
     <div ref={ref} className="flex gap-3">
       <div className="flex-shrink-0 w-5 h-5 rounded-full bg-red/30 mt-0.5 animate-pulse" />
       <div className="flex items-center gap-2 py-0.5">
         <span className="font-mono text-[10px] tracking-widest text-muted uppercase">
-          {hint === 'tool' ? 'Using tool' : 'Thinking'}
+          {label}
         </span>
         {[0, 1, 2].map((i) => (
           <span
@@ -1044,9 +1048,9 @@ export default function ChatInterface() {
           try { data = JSON.parse(part.slice(6)) } catch { continue }
 
           if (data.type === 'thinking') {
-            setAgentStatus('thinking'); setThinkHint('thinking')
+            setAgentStatus('thinking'); setThinkHint(data.hint || 'thinking')
           } else if (data.type === 'tool') {
-            setThinkHint('tool')
+            setAgentStatus('thinking'); setThinkHint(data.name ? `Using ${data.name}` : 'tool')
           } else if (data.type === 'usage') {
             const a = turnUsageAccum.current
             a.input    += data.input    ?? 0
