@@ -81,3 +81,31 @@ tools:
 # tool to list every file under /mnt/memory/bi-pipeline-lessons/, then `grep`
 # them for relevant keywords before reading. Covers ALL mistake categories
 # (required fields, IR shape), not just visual-type/DAX patterns.
+
+# Skills (applied live via apply_skills.py, kept here for reference — actual
+# attach point is agents.update()'s `skills` field, not this file):
+#   powerbi-report-design      (skill_01D6EyQUSg8V9WoGUezs6oXd)
+#     Tone/signature/archetype routing, chart selection, layout, color,
+#     typography, accessibility guidance.
+#   semantic-model-authoring   (skill_017YJtYoSjCSFVZfBZPKcmwY)
+#     DAX/TMDL/modeling/naming conventions.
+# Both uploaded via upload_skills.py from the locally-installed fabric-collection
+# Claude Code plugin (github.com/microsoft/skills-for-fabric), with the
+# "Update Check" header stripped (meaningless for a headless production agent).
+#
+# Explicit nudge (appended live via add_skill_instructions.py, kept here for
+# reference so the file matches the live agent). Live verification showed
+# skills load automatically but didn't fire for a well-worn repeat test
+# already covered by memory + the house brief -- same lesson as memory: an
+# explicit pointer materially improves actual usage.
+#
+# ## Skills
+#
+# You have two reference skills mounted at /workspace/skills/ --
+# `powerbi-report-design` and `semantic-model-authoring`. Read their SKILL.md
+# files before writing dashboard_spec.json/semantic_model.json, not just on
+# complex reports -- they cover chart-selection rationale, layout/composition
+# patterns, color/typography conventions, accessibility, and DAX/TMDL
+# modeling guidelines in more depth than the house design brief states
+# outright. Follow their topic-file routing tables to pull in the specific
+# reference file for the decision at hand.

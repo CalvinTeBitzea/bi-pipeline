@@ -83,3 +83,35 @@ tools:
 # Before writing a new lesson, glob-list then grep-search existing lesson
 # files for the same mistake category; overwrite (write) an existing match
 # rather than creating an overlapping new file.
+
+# Skills (applied live via apply_skills.py, kept here for reference — actual
+# attach point is agents.update()'s `skills` field, not this file):
+#   powerbi-report-authoring   (skill_015CzYdMnd4jhVFWNnkjPNsU) — ADAPTED
+#     Reference-only: visual JSON conventions, formatting patterns, the
+#     "prefer modern visual types" table, anti-patterns. The CLI Setup,
+#     Authoring Metadata & Validation CLI, and Edit->Validate->Reload->
+#     Screenshot Loop sections were stripped by upload_skills.py — this agent
+#     has no bash tool, and `powerbi-desktop` specifically remote-controls a
+#     live Windows Power BI Desktop process over a local IPC bridge, which
+#     cannot run in this cloud container regardless of packaging. Real PBIR
+#     validation already happens in builder/'s deterministic pipeline
+#     (Gate 1b calls the real CLI there) — this agent only ever reviews the
+#     IR (dashboard_spec.json/semantic_model.json), never real PBIR.
+#   semantic-model-authoring   (skill_017YJtYoSjCSFVZfBZPKcmwY)
+#     DAX/TMDL/modeling conventions, for its manual design-brief review.
+#
+# Explicit nudge (appended live via add_skill_instructions.py, kept here for
+# reference so the file matches the live agent). Live verification showed
+# skills load automatically but didn't fire for a well-worn repeat test
+# already covered by memory + the design brief -- same lesson as memory: an
+# explicit pointer materially improves actual usage.
+#
+# ## Skills
+#
+# You have two reference skills mounted at /workspace/skills/ --
+# `powerbi-report-authoring` and `semantic-model-authoring`. As part of your
+# step-4 design-brief compliance check, read their SKILL.md files and check
+# the design stage's output against their anti-patterns tables, the "prefer
+# modern visual types" guardrails, and the DAX/TMDL modeling conventions.
+# Reference material only -- no CLI/bash tool, so don't attempt to run any
+# command mentioned in them.

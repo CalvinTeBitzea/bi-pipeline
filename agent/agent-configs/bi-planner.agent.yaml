@@ -40,3 +40,24 @@ system: |
 
   If asked to revise (the coordinator will relay the human's corrections),
   update your spec accordingly rather than starting over.
+tools:
+  # bi-planner previously had no tools at all (pure conversational agent).
+  # Managed Agents requires the `read` tool on any agent with skills attached
+  # (skills load their SKILL.md via read) -- added live via apply_skills.py's
+  # follow-up fix when attaching skills below returned a 400.
+  - type: agent_toolset_20260401
+    default_config:
+      enabled: false
+    configs:
+      - name: read
+        enabled: true
+      - name: glob
+        enabled: true
+
+# Skills (applied live via apply_skills.py, kept here for reference — actual
+# attach point is agents.update()'s `skills` field, not this file):
+#   powerbi-report-planning  (skill_018oWxEVCukviXvp7JzMtsDK)
+#     Microsoft's skills-for-fabric requirements->build methodology
+#     (Define -> Inspect -> Spec -> Approve -> Build -> Validate -> Publish),
+#     uploaded via upload_skills.py from the locally-installed fabric-collection
+#     Claude Code plugin (github.com/microsoft/skills-for-fabric).
