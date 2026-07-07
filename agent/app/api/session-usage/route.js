@@ -1,5 +1,22 @@
+// WHAT THIS FILE IS, IN BUSINESS TERMS
+// -------------------------------------
+// Answers one question for a single conversation: "how long did this take,
+// and how much did it cost in real dollars?" This is what feeds the "This
+// conversation" figures in the sidebar's always-visible usage strip.
+//
+// CONCEPT: Cost isn't stored anywhere — it has to be CALCULATED
+// -------------------------------------------------------------------------
+// The platform tracks and bills by TOKENS (roughly: word-fragments an AI
+// model reads or writes), not dollars — dollar cost depends on which MODEL
+// did the work, since different models have different per-token prices (see
+// lib/pricing.js). Because this pipeline deliberately uses a cheaper model
+// for some stages (bi-planner/bi-design) and a pricier one for others
+// (coordinator/bi-authoring — see lib/pricing.js's AGENT_MODEL mapping),
+// there's no single "tokens x one price" formula for a whole conversation —
+// each agent's token usage has to be priced at ITS OWN model's rate, then
+// summed. That per-agent breakdown is exactly what `costForSession` computes.
 import Anthropic from '@anthropic-ai/sdk'
-import { costFor } from '../../../lib/pricing'
+import { costForSession } from '../../../lib/pricing'
 
 const DEFAULT_SESSION_ID = process.env.REFERENCE_SESSION_ID || 'sesn_01S3zW6pLxWnwyxZ9rmB6tZB'
 const BETA               = 'managed-agents-2026-04-01'
@@ -16,29 +33,10 @@ export async function GET(request) {
     // keeps counting elapsed idle time until the session is archived.
     const elapsedSeconds = (new Date(session.updated_at) - new Date(session.created_at)) / 1000
 
-    // Each subagent thread reports its own cumulative usage + the exact model
-    // snapshot it ran with — no need to walk individual model-request events.
-    const byAgent = {}
-    for await (const thread of client.beta.sessions.threads.list(SESSION_ID, { betas: [BETA] })) {
-      const name  = thread.parent_thread_id === null ? 'coordinator' : (thread.agent?.name ?? 'subagent')
-      const model = thread.agent?.model?.id ?? 'claude-opus-4-8'
-      const u = thread.usage
-      if (!u) continue
-
-      const usage = {
-        input:      u.input_tokens ?? 0,
-        output:     u.output_tokens ?? 0,
-        cacheRead:  u.cache_read_input_tokens ?? 0,
-        cacheWrite: (u.cache_creation?.ephemeral_5m_input_tokens ?? 0) + (u.cache_creation?.ephemeral_1h_input_tokens ?? 0),
-      }
-
-      if (!byAgent[name]) byAgent[name] = { model, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
-      byAgent[name].input      += usage.input
-      byAgent[name].output     += usage.output
-      byAgent[name].cacheRead  += usage.cacheRead
-      byAgent[name].cacheWrite += usage.cacheWrite
-      byAgent[name].cost       += costFor(usage, model)
-    }
+    // The actual per-agent-role cost breakdown — see lib/pricing.js's
+    // costForSession for how this walks every subagent's own thread usage
+    // and prices each one at its own model's rate.
+    const byAgent = await costForSession(client, SESSION_ID, [BETA], new Date(session.created_at))
     const totalCost = Object.values(byAgent).reduce((sum, a) => sum + a.cost, 0)
 
     return Response.json({

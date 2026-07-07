@@ -1,9 +1,59 @@
 """
-Stage 4 — PBIP Builder (PBIR format)
+WHAT THIS FILE IS, IN BUSINESS TERMS
+--------------------------------------
+This is the single file that actually translates a validated IR (the AI's
+dashboard_spec.json + semantic_model.json) into REAL Power BI Desktop
+project files — the moment the "wireframe on paper" becomes something you
+can open, click around in, and present to a client. Everything upstream of
+this (planning, design, validation) has been about deciding WHAT to build;
+this file is entirely about HOW to write it in the exact byte-for-byte
+format Power BI Desktop expects.
 
-Writes pages and visuals into an existing PBIP project using the PBIR format.
-The project must already exist — created by Power BI Desktop. This agent
-writes only into the definition/pages/ folder and updates pages.json.
+CONCEPT: The PBIP / PBIR project format
+-------------------------------------------------------------------------
+A Power BI project on disk (.pbip) is not one binary file — it's a folder of
+many small, human-readable JSON (and TMDL text) files, one per page, one per
+visual, plus shared metadata. "PBIR" refers to that JSON-based report
+definition format specifically. This builder deliberately only ever writes
+into ONE part of that folder — `definition/pages/` (the pages and visuals) —
+and never touches `report.json`, `version.json`, or the project-level
+metadata files, which are considered "owned by Power BI Desktop itself."
+That boundary matters: Desktop created the project and manages its own
+housekeeping files; this code only adds the new content the AI pipeline
+designed, the same way a contractor doing an office fit-out doesn't touch
+the building's foundation or utility connections.
+
+CONCEPT: An important word collision — "skill" means something DIFFERENT here
+-------------------------------------------------------------------------------
+This codebase uses the word "skill" for two UNRELATED things, and it matters
+not to confuse them:
+  1. In `agent/` (the AI chat pipeline), a "Skill" is Anthropic's Managed
+     Agents feature — a bundle of REFERENCE DOCUMENTATION an AI model can
+     read to inform its decisions (see agent/agent-configs/upload_skills.py).
+  2. In THIS file and `lib/skills.py`, a "skill" is a reusable VISUAL
+     TEMPLATE — a pre-built, hand-authored `visual.json` file with
+     placeholder tokens (e.g. `{{MEASURE_TABLE}}`) that gets filled in with
+     this specific report's actual table/measure names, similar to a mail-
+     merge template. It's used for visual types that need more polish or a
+     more specific shape than the simple generic builder (`_build_visual_json`
+     below) produces — e.g. a combo bar+line chart.
+Same English word, two independent mechanisms, in two different parts of
+the codebase — worth remembering while reading either one.
+
+CONCEPT: "Gates" — automated quality checks baked into the build itself
+-------------------------------------------------------------------------
+Rather than trusting that the generated files are correct, this pipeline
+checks its own work at multiple levels, similar to a manufacturing line with
+inspection points after each major step, not just a final QA pass:
+  Gate 1  — do all the JSON files even PARSE? (runs here, always)
+  Gate 1b — does Microsoft's OWN official validator CLI accept them? (runs
+            here, but only if that CLI happens to be installed — see below)
+  Gate 2  — does it actually OPEN correctly in real Power BI Desktop? (this
+            one can't be automated in a cloud/Linux pipeline — Desktop is a
+            Windows GUI app — so it's a manual, human-in-the-loop check)
+  Gate 3  — does the output actually MATCH what the AI's IR asked for
+            (right number of pages/visuals, right positions, right chart
+            types)? (runs here)
 
 PBIR files written per page:
   {report}/definition/pages/{pageName}/page.json
@@ -11,11 +61,6 @@ PBIR files written per page:
 
 Files NOT touched (Desktop owns these):
   report.json, version.json, .platform, definition.pbir
-
-Three gates:
-  Gate 1 — all generated JSON files parse cleanly (runs here)
-  Gate 2 — open in Power BI Desktop (manual, Windows VM)
-  Gate 3 — IR fidelity: page/visual count, types, positions (runs here)
 """
 
 from __future__ import annotations
@@ -35,6 +80,12 @@ from lib import layout as layout_engine
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+# These are all values Power BI's file format requires to be EXACTLY right —
+# not stylistic choices. `$schema` URLs are how a PBIR file declares "this is
+# what version of the format I'm written in," similarly to a `<!DOCTYPE>` in
+# an HTML file; `_VISUAL_TYPE_MAP` is the direct translation table between
+# this app's own friendly type names ("bar", "line") and Power BI's actual,
+# much less readable internal type identifiers ("clusteredBarChart").
 
 # Every visual in a build (skill-built or fallback) is normalized to this one
 # resolved version — see _skill_outputs and _build_visual_json. Bumped to 2.9.0
@@ -77,6 +128,13 @@ _Z_DEFAULT = 2000
 # ---------------------------------------------------------------------------
 # Schema version detection
 # ---------------------------------------------------------------------------
+# When adding pages into an EXISTING project (rather than a brand new one),
+# it's safer to match whatever format version that project's own visuals
+# already use than to impose our own default — mixing schema versions across
+# visuals in the same report risks Power BI Desktop treating them
+# inconsistently. So this peeks at one already-existing visual.json file
+# already in the project (if any) and copies its declared version, only
+# falling back to our own default for a genuinely empty/new project.
 
 def _detect_schema_version(pages_dir: Path) -> str:
     """Read $schema URL from an existing visual.json. Falls back to 2.0.0."""
@@ -131,6 +189,16 @@ def _visual_folder_name(idx: int, visual_spec: dict) -> str:
 # ---------------------------------------------------------------------------
 # Field projection builders
 # ---------------------------------------------------------------------------
+# CONCEPT: A "projection" — how a Power BI visual says "show THIS data"
+# -------------------------------------------------------------------------
+# A chart in Power BI doesn't embed actual numbers — it stores a reference
+# ("Entity: Fact_Sales, Property: Net Revenue") that tells Power BI which
+# measure/column to pull live from the semantic model whenever the report is
+# opened, refreshed, or filtered. That reference structure is called a
+# "projection." These two functions build exactly that structure for one
+# measure or one dimension (a table column) respectively, using the AI's
+# semantic_model.json as the lookup table for exactly which underlying table
+# each named measure/column actually lives in.
 
 def _measure_projection(name: str, measure_defs: dict) -> dict | None:
     m = measure_defs.get(name)
@@ -183,6 +251,17 @@ def _build_query_state(
     """
     Build the queryState dict for a visual.
     Each key is a data role name; value has a projections list.
+
+    Every Power BI visual TYPE has its own fixed set of named "roles" data
+    can be assigned to — a bar chart has "Category"+"Y", a scatter chart
+    needs "X"+"Y" specifically (not the generic Category/Y pair), a KPI
+    card has just one primary "Data" role, and so on. This is the same idea
+    as a print template with named placeholder slots — you can't put content
+    in a slot the template doesn't define, and different templates define
+    different slots. This function is the lookup table translating this
+    app's own IR (a flat list of "measures used" + "dimensions used") into
+    the RIGHT named-role shape for whichever specific chart type is being
+    built.
     """
     pm = _projections(measures_used, True, measure_defs)
     pd = _projections(dimensions_used, False, dimension_defs)
@@ -256,6 +335,13 @@ def _build_query_state(
 # owned by semantic_model.json, so a skill's TMDL fragments are not applied here.
 # A skill that needs a new model object is flagged via _skill_needs_model_objects.)
 # ---------------------------------------------------------------------------
+# Reminder: "skill" here means the VISUAL-TEMPLATE kind (see the top-of-file
+# note), not an Anthropic Managed Agents Skill. A skill is a hand-authored
+# visual.json/TMDL file with `{{PLACEHOLDER}}`-style tokens in it — this
+# section fills those placeholders in with THIS report's real table/measure
+# names, IDs, and layout numbers, the same mechanical process as a mail-merge
+# filling a form letter template with each recipient's actual name and
+# address.
 
 _GEOM_SUFFIX = {"_X": "x", "_Y": "y", "_Z": "z", "_HEIGHT": "h", "_WIDTH": "w",
                 "_TAB_ORDER": "tabOrder"}
@@ -347,6 +433,11 @@ def _skill_needs_model_objects(skill) -> bool:
 # ---------------------------------------------------------------------------
 # Visual JSON builder
 # ---------------------------------------------------------------------------
+# The FALLBACK path: whenever a visual has no matching template ("skill"),
+# this builds its visual.json directly from the generic type map and
+# projection logic above — plainer output than a hand-authored skill
+# template, but works for any of the standard chart types without needing a
+# bespoke template to exist for it first.
 
 def _build_visual_json(
     visual_spec: dict,
@@ -409,6 +500,31 @@ def _build_page_json(page_spec: dict, folder_name: str) -> dict:
 # ---------------------------------------------------------------------------
 # TMDL generation (Claude) — for new semantic models
 # ---------------------------------------------------------------------------
+# CONCEPT: TMDL — the text format Power BI semantic models are defined in
+# -------------------------------------------------------------------------
+# TMDL (Tabular Model Definition Language) is a plain-text format for
+# describing a semantic model's tables, columns, measures, and
+# relationships — the model equivalent of what PBIR is for report pages.
+#
+# NOTE ON THIS SECTION'S STATUS: `_generate_tmdl` below is NOT currently
+# called anywhere in this file's `run()` entry point — the live pipeline's
+# semantic model always comes from the AI-authored semantic_model.json
+# (turned into TMDL fragments by the skill-template mechanism above, when a
+# skill ships one). This function is a reserved, not-yet-wired-in capability
+# for a DIFFERENT scenario: generating a whole new semantic model's TMDL
+# directly with an AI model, for a project that doesn't have one yet at all.
+# Worth knowing it's here, but it's dormant, not part of today's real flow.
+#
+# CONCEPT: Why call an AI model INSIDE an otherwise deterministic pipeline?
+# -------------------------------------------------------------------------
+# This whole builder's design philosophy is "prefer deterministic code over
+# AI wherever the output must be exactly correct" (see the top-of-file
+# note). TMDL syntax is exactly the kind of structured-but-flexible text
+# generation task where a model can be a reasonable tool — PROVIDED its
+# output is still checked afterward (note the `"model Model" not in tmdl`
+# sanity check below) rather than trusted blindly. This is "prefer
+# deterministic code — but still make room for AI where it's genuinely the
+# better tool for the specific sub-task."
 
 _TMDL_SYSTEM = """You are a Power BI TMDL expert. Generate valid TMDL for a semantic model.
 
@@ -448,6 +564,11 @@ def _generate_tmdl(model: dict) -> str:
 # ---------------------------------------------------------------------------
 # File writing
 # ---------------------------------------------------------------------------
+# The actual disk I/O — everything above this point was preparing in-memory
+# Python dicts; these two functions are where that data finally becomes real
+# files (and where `pages.json`, the index listing every page in the
+# project and which one opens by default, gets updated to include the newly
+# written pages).
 
 def _write_page(
     pages_dir: Path,
@@ -494,6 +615,16 @@ def _update_pages_json(pages_dir: Path, new_page_names: list[str]) -> None:
 # ---------------------------------------------------------------------------
 # House theme registration (contracts/HOUSE_DESIGN_BRIEF.md)
 # ---------------------------------------------------------------------------
+# Business purpose: every report this pipeline produces should look like it
+# came from the same design "house style" (fonts, colors, no default
+# gridlines/borders — see bi-design.agent.yaml's house design brief) rather
+# than each one reinventing its own look. Rather than trusting the AI to
+# recreate that styling by hand every time, this copies one single,
+# pre-made theme FILE into the project and registers it as the report's
+# active theme — guaranteeing pixel-identical branding across every build,
+# the same way a company's official PowerPoint template guarantees every
+# deck looks consistent, rather than relying on each employee to manually
+# match the brand colors from memory.
 
 _HOUSE_THEME_DIR = Path(__file__).parent.parent / "pbi-theme"
 _HOUSE_THEME_NAME = "HouseEditorial-ca31b320.json"
@@ -546,6 +677,11 @@ def _register_house_theme(report_path: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 # Gate 1 — JSON validation
 # ---------------------------------------------------------------------------
+# The cheapest, fastest possible check: is every file we just wrote even
+# syntactically valid JSON? This catches the most basic class of bug (a
+# stray comma, an unclosed brace) before any more expensive or nuanced check
+# even runs — the software equivalent of checking a form is filled out at
+# all before checking whether the answers are correct.
 
 def _gate1_validate(files: list[Path]) -> tuple[bool, list[str]]:
     """Parse every generated file. Returns (passed, errors)."""
@@ -561,6 +697,15 @@ def _gate1_validate(files: list[Path]) -> tuple[bool, list[str]]:
 # ---------------------------------------------------------------------------
 # Gate 1b — official CLI validation (@microsoft/powerbi-report-authoring-cli)
 # ---------------------------------------------------------------------------
+# A step up from Gate 1: this doesn't just check "is it valid JSON," it asks
+# MICROSOFT'S OWN official command-line tool "would Power BI Desktop actually
+# accept this file structure?" — much closer to ground truth than our own
+# hand-written checks could ever be, since it's the same validation logic
+# Power BI's real tooling uses. It's optional (`shutil.which(...)` returning
+# None just means the tool isn't installed on this machine) rather than a
+# hard requirement, so the pipeline can still run and produce useful,
+# probably-correct output even in an environment where that separate CLI
+# tool hasn't been installed.
 
 def _gate1b_cli_validate(report_path: Path) -> tuple[bool | None, list[str]]:
     """Run `powerbi-report-author validate` against the .Report directory.
@@ -575,6 +720,13 @@ def _gate1b_cli_validate(report_path: Path) -> tuple[bool | None, list[str]]:
         return None, ["powerbi-report-author CLI not installed — skipping Gate 1b "
                        "(npm install -g @microsoft/powerbi-report-authoring-cli)"]
 
+    # CONCEPT: `subprocess.run` — Python calling out to a separate program
+    # This isn't a Python library call; `powerbi-report-author` is a whole
+    # separate command-line tool (written and published by Microsoft,
+    # installed via npm). `subprocess.run` is Python's mechanism for
+    # launching any external program as if you'd typed it into a terminal,
+    # and capturing whatever it prints back as text this code can then read
+    # and interpret (`proc.stdout` below).
     try:
         proc = subprocess.run(
             ["powerbi-report-author", "validate", str(report_path)],
@@ -600,6 +752,14 @@ def _gate1b_cli_validate(report_path: Path) -> tuple[bool | None, list[str]]:
 # ---------------------------------------------------------------------------
 # Gate 3 — IR fidelity check
 # ---------------------------------------------------------------------------
+# The most important gate for THIS pipeline specifically, because it's the
+# only one that checks a question neither Gate 1 nor Gate 1b can answer: did
+# the output actually match what the AI's design ASKED FOR? A file can be
+# perfectly valid PBIR (Gates 1/1b happy) while still being the WRONG number
+# of pages, the wrong chart type, or visuals in the wrong position — this
+# gate is the one comparing "what was requested" against "what was
+# produced," the same way a QA reviewer checks a finished product against
+# its original spec sheet, not just "does it function at all."
 
 def _gate3_fidelity(spec: dict, written_pages: dict, pos_tol: float = 10.0) -> tuple[bool, list[str]]:
     """
@@ -668,6 +828,15 @@ def _gate3_fidelity(spec: dict, written_pages: dict, pos_tol: float = 10.0) -> t
 def run(build_id: str, pbip_report_path: str | None = None) -> dict:
     """
     Write PBIR pages + visuals into an existing PBIP project.
+
+    This is the orchestration function that ties every piece above together,
+    in order: figure out where to write (a real project, or just a scaffold
+    for inspection) → detect the right schema version → for every page and
+    every visual in the AI's spec, build its JSON (via a skill template if
+    one matches, otherwise the generic fallback builder) → write it all to
+    disk → register the house theme → run all three automatable gates →
+    record the full result. A real user-facing run of the whole pipeline
+    (conductor.py Stage 2) is just one call to this one function.
 
     Args:
         build_id: identifies the build artifacts (semantic_model.json, dashboard_spec.json)

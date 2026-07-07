@@ -1,3 +1,21 @@
+// WHAT THIS FILE IS, IN BUSINESS TERMS
+// -------------------------------------
+// When a user closes the chat app and comes back later — or opens it on a
+// different machine — this endpoint is what redraws the entire conversation
+// exactly as it looked before: every message, in order, AND the collapsible
+// "N steps" narration trail (what each specialist agent said/did) under each
+// reply. Without this, only a LIVE conversation (via chat/route.js's SSE
+// stream) would ever be visible; refreshing the page would lose everything.
+//
+// CONCEPT: Rebuilding a conversation transcript from a raw event log
+// -------------------------------------------------------------------------
+// Same underlying idea as session-files/route.js: there's no "give me the
+// finished transcript" endpoint, only "give me the entire ordered history of
+// everything that happened." This file is the transcript-shaped version of
+// that same reconstruction job — it groups a stream of low-level events
+// (individual messages, tool calls, thread creations, token-usage reports)
+// back into the higher-level concept a user actually thinks in: "a back-
+// and-forth conversation, turn by turn."
 import Anthropic from '@anthropic-ai/sdk'
 import { summarizeValidateResult, summarizeToolCall } from '../../../lib/activity'
 
@@ -33,6 +51,11 @@ export async function GET(request) {
   }
 
   // Reconstruct turns. Accumulate span.model_request_end token counts per turn.
+  //
+  // A "turn" here means: one user message, plus the coordinator's eventual
+  // final reply to it (which might involve several subagent detours in
+  // between) — the same unit the chat UI renders as one user bubble
+  // followed by one agent bubble.
   const messages = []
   let pendingUser  = null
   let pendingAgent = null
@@ -54,6 +77,8 @@ export async function GET(request) {
 
   for (const e of events) {
     if (e.type === 'user.message') {
+      // A new user message always closes out whatever turn was previously
+      // in progress — flush it to `messages` before starting the new one.
       if (pendingUser)  messages.push(pendingUser)
       if (pendingAgent) {
         messages.push({ ...pendingAgent, usage: { ...turnUsage } })
@@ -75,6 +100,9 @@ export async function GET(request) {
         pendingAgent = { role: 'agent', text, time: fmt(e.processed_at), id: e.id }
       }
     } else if (e.type === 'span.model_request_end') {
+      // Every individual model call inside this turn (coordinator's own
+      // calls AND, indirectly, subagents') reports its token usage here —
+      // summed up, this becomes the per-message cost/usage badge in the UI.
       const u = e.model_usage
       if (u) {
         turnUsage.input    += u.input_tokens ?? 0
@@ -83,6 +111,11 @@ export async function GET(request) {
         turnUsage.cacheWrite += u.cache_creation_input_tokens ?? 0
       }
     } else if (e.type === 'agent.thread_context_compacted') {
+      // The platform automatically summarized/trimmed the conversation
+      // history to keep it within the model's context window — analogous
+      // to a human assistant re-reading their notes and writing a shorter
+      // summary partway through a very long meeting. We insert a visible
+      // marker for this so a user isn't confused by an apparent "gap."
       // Flush any in-progress turn before inserting the compaction marker
       if (pendingUser)  messages.push(pendingUser)
       if (pendingAgent) {
@@ -137,6 +170,8 @@ export async function GET(request) {
   // Fetch each subagent thread's own event log (concurrently — a subagent
   // that respawned across revision rounds has more than one thread) and pull
   // out its narration the same way chat/route.js's per-thread consumer does.
+  // (This is a REPLAY of history, not a live stream — same data, fetched via
+  // `.list()` instead of `.stream()`, since nothing is "happening" anymore.)
   const threadIds = Object.keys(threadAgentNames)
   const threadEventLists = await Promise.all(
     threadIds.map((id) => (async () => {
@@ -158,7 +193,9 @@ export async function GET(request) {
     }
   }
 
-  // Merge narration into the turn it happened during.
+  // Merge narration into the turn it happened during — i.e. figure out
+  // WHICH agent reply each piece of subagent narration belongs underneath,
+  // purely by comparing timestamps against each turn's start/end window.
   narrationEvents.sort((a, b) => new Date(a.at) - new Date(b.at))
   for (const { start, end, messageIndex } of turnBoundaries) {
     const startMs = new Date(start).getTime()

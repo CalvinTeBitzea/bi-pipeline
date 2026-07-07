@@ -1,3 +1,36 @@
+// ============================================================================
+// WHAT THIS FILE IS, IN BUSINESS TERMS
+// ============================================================================
+// This is the ENTIRE chat application the user actually sees and interacts
+// with: the sidebar (conversation list + token/cost tracking + file
+// management), the message thread, the input box, and the file preview
+// panel. Every other file in this codebase exists to feed data to, or
+// receive actions from, this one. If app/api/chat/route.js is "the phone
+// line to the AI team," this file is "the whole reception desk and meeting
+// room" the user sits in.
+//
+// It's a single large file rather than many small ones for a practical
+// reason common in fast-moving UI code: the sidebar, message list, and
+// input box all need to react to the same shared state (is the agent
+// currently thinking? which conversation is active?) — keeping them in one
+// file avoids threading that shared state through many layers of separate
+// files. As the app grows, natural places to split it out are marked by the
+// "─── Section ───" divider comments below.
+//
+// CONCEPT: React components, state, and "re-rendering"
+// -------------------------------------------------------------------------
+// This file is built with React, a UI library where you describe a screen
+// as a function of DATA ("state") rather than writing step-by-step
+// instructions to update the page by hand. `useState` declares a piece of
+// data the screen depends on (e.g. "the list of messages"); whenever you
+// call its setter function (e.g. `setMessages(...)`), React automatically
+// re-runs the relevant part of this file and updates exactly the parts of
+// the page that actually changed. `useEffect` is for "side effects" — things
+// that need to happen in reaction to a change, but aren't themselves part of
+// what's drawn on screen (saving to localStorage, starting an animation,
+// scrolling to the bottom). `useCallback` and `useRef` are optimizations/
+// escape hatches explained inline below, at the point they're first used in
+// a way that matters.
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
@@ -9,6 +42,15 @@ const AGENT_LABEL        = 'BI Wireframe Agent'
 const DEFAULT_SESSION_ID = process.env.NEXT_PUBLIC_REFERENCE_SESSION_ID || 'sesn_01S3zW6pLxWnwyxZ9rmB6tZB'
 const STORAGE_KEY        = 'bi_agent_sessions'
 
+// CONCEPT: localStorage — this browser's own private notepad
+// -------------------------------------------------------------------------
+// The REAL conversation history lives on Anthropic's servers (fetched via
+// session-history/route.js). What's saved here in the browser's localStorage
+// is much smaller: just "which conversations has THIS browser opened, and
+// what did I nickname them" — a personal bookmarks list, not the source of
+// truth. That's why losing localStorage (a different browser, a cleared
+// cache) doesn't lose any real work — it just loses the friendly nicknames
+// and the "which one was I looking at" convenience.
 function loadStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -41,7 +83,16 @@ function formatMarkdown(text) {
 }
 
 // ─── Messages ────────────────────────────────────────────────────────────────
+// The components in this section render ONE chat bubble each — a user
+// message, an agent reply, a "context compacted" marker, or a "thinking"
+// indicator. Each is a small, focused component (a common React practice:
+// break a big screen into named pieces, one per distinct kind of content)
+// with its own tiny entrance animation via GSAP.
 
+// One line of "what a specialist agent just did," e.g. "bi-design: write
+// dashboard_spec.json" — the building block of the collapsible narration
+// trail under each agent reply (see AgentMessage below) and the live,
+// still-in-progress version shown while a turn is running (LiveNarration).
 function NarrationLine({ entry }) {
   const ref = useRef(null)
   useEffect(() => {
@@ -58,6 +109,11 @@ function NarrationLine({ entry }) {
   )
 }
 
+// One reply bubble from the agent team (shown as coming from a single
+// "assistant," even though behind the scenes several specialists may have
+// worked on it — the coordinator's final message is what's actually
+// rendered here). Also carries this turn's token-usage badge and, if any
+// subagents narrated their steps, the collapsible "N steps" disclosure.
 function AgentMessage({ msg }) {
   const ref = useRef(null)
   const [narrationOpen, setNarrationOpen] = useState(false)
@@ -108,6 +164,13 @@ function AgentMessage({ msg }) {
   )
 }
 
+// One message bubble the USER sent. The very first message of a
+// conversation is special: sendMessage() (much further down) bundles the
+// schema + business context + attached files into one long, structured
+// block of text before it's ever sent — `isStructured` detects that shape
+// here so it can be shown collapsed ("[ Schema + context ]") instead of as
+// a wall of raw text, since a human doesn't need to re-read their own input
+// every time they scroll past it.
 function UserMessage({ msg, onRerun, isIdle }) {
   const ref = useRef(null)
   const [expanded, setExpanded] = useState(false)
@@ -136,6 +199,11 @@ function UserMessage({ msg, onRerun, isIdle }) {
         </div>
         <div className="flex items-center justify-end gap-1.5 mt-1">
           {isStructured && (
+            // The "rerun" / retry button — same idea as ChatGPT's "Try
+            // again" arrow. Only shown on the original setup message, and
+            // only enabled once the agent is idle (can't rerun mid-turn).
+            // See rerunPrompt below for why this opens a NEW conversation
+            // rather than replaying in place.
             <button
               onClick={() => onRerun(msg.text)}
               disabled={!isIdle}
@@ -164,6 +232,11 @@ function CompactionMarker({ msg }) {
   )
 }
 
+// The animated "..." indicator shown while the agent team is working and
+// hasn't produced a visible reply yet — `hint` lets it say something more
+// specific than generic "Thinking" (e.g. "bi-design generating…") when we
+// know which specialist is currently active (see SUBAGENT_HINTS in
+// app/api/chat/route.js, which is where these hint strings originate).
 function ThinkingBubble({ hint }) {
   const ref = useRef(null)
   useEffect(() => {
@@ -193,6 +266,12 @@ function ThinkingBubble({ hint }) {
   )
 }
 
+// The IN-PROGRESS version of AgentMessage's collapsible narration list —
+// rendered directly under the ThinkingBubble WHILE a turn is still running,
+// so the user sees each step the moment it happens rather than only after
+// the whole reply finishes and gets folded into a collapsed "N steps"
+// toggle. This is the actual "watch it think" feature: `entries` streams in
+// live from dispatchToAgent's SSE handling further down this file.
 function LiveNarration({ entries }) {
   if (!entries.length) return null
   return (
@@ -204,6 +283,17 @@ function LiveNarration({ entries }) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// CONCEPT: Triggering a file download entirely in the browser, no server
+// involved
+// -------------------------------------------------------------------------
+// The agent's output files already live in the browser's memory as plain
+// text (fetched via session-files/route.js) — there's no separate "download"
+// endpoint to call. A `Blob` is the browser's way of representing that text
+// as if it were a real file (with a MIME type, so e.g. a .json downloads as
+// recognizably JSON); `URL.createObjectURL` mints a temporary local link to
+// it; creating an `<a>` tag and calling `.click()` on it programmatically is
+// a common trick to trigger a real "Save As" download without the user ever
+// seeing that invisible link element.
 function downloadBlob(name, content) {
   const ext  = name.split('.').pop().toLowerCase()
   const mime = { html: 'text/html', md: 'text/markdown', txt: 'text/plain', json: 'application/json' }[ext] ?? 'text/plain'
@@ -216,6 +306,18 @@ function downloadBlob(name, content) {
 
 // ─── Markdown renderer ───────────────────────────────────────────────────────
 
+// CONCEPT: A small, purpose-built Markdown renderer instead of a library
+// -------------------------------------------------------------------------
+// Markdown is the lightweight "# heading, **bold**, - bullet" text format
+// the agent writes its planning specs in. Rather than pulling in a general-
+// purpose Markdown library (extra dependency weight for a feature used in
+// exactly one preview panel), this hand-rolls just the handful of patterns
+// this app's own agents actually produce: headings, bullet lists, bold text,
+// inline code, and paragraphs. This is a deliberate "just enough, no more"
+// engineering trade-off — appropriate here because the INPUT is controlled
+// (our own agents' output, not arbitrary user-supplied Markdown from the
+// wider internet), which limits how many edge cases this needs to handle
+// correctly.
 function renderMarkdown(md) {
   const esc    = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const inline = (s) => s
@@ -254,6 +356,24 @@ function renderMarkdown(md) {
 
 // ─── Preview panel ────────────────────────────────────────────────────────────
 
+// The slide-out panel that shows one file's full content (rendered as HTML
+// in an iframe, formatted Markdown, or plain text) — opened by clicking the
+// eye icon next to any file in the sidebar. Business purpose: let a user
+// actually LOOK at the wireframe.html or dashboard_spec.json the agent
+// produced without downloading it first.
+//
+// CONCEPT: Using a ref instead of state for something that changes 60x/second
+// -------------------------------------------------------------------------
+// The panel's width needs to update continuously while the user drags its
+// resize handle — potentially many times per second. If `widthRef` were
+// React state instead, every single pixel of movement would trigger a full
+// React re-render, which is unnecessarily expensive for something this
+// high-frequency. Instead, the width is kept in a `useRef` (a plain mutable
+// box that does NOT trigger a re-render when changed) and applied directly
+// to the DOM element's inline style during the drag — React itself is
+// bypassed for the duration of the drag, and only reads from `widthRef`
+// again the next time the component happens to re-render for some other
+// reason (e.g. a new file being previewed).
 function PreviewPanel({ file, onClose }) {
   const panelRef  = useRef(null)
   const prevName  = useRef(null)
@@ -266,6 +386,11 @@ function PreviewPanel({ file, onClose }) {
     }
   }, [file])
 
+  // Standard "manual drag" recipe for anything the browser doesn't support
+  // dragging out of the box: on mousedown, attach temporary mousemove/mouseup
+  // listeners to the WHOLE document (not just this element, so the drag
+  // keeps tracking even if the cursor leaves the handle itself), and remove
+  // them again the moment the mouse button is released.
   const onDragStart = useCallback((e) => {
     e.preventDefault()
     const initX = e.clientX
@@ -355,6 +480,12 @@ function PreviewPanel({ file, onClose }) {
 
 // ─── ArchiveSection ──────────────────────────────────────────────────────────
 
+// A collapsed "Archive (N)" disclosure listing every OLDER version of every
+// file in the current conversation — e.g. bi-design's first draft of
+// dashboard_spec.json, before bi-authoring's feedback led to a rewrite. This
+// is the UI for the version history session-files/route.js reconstructs from
+// the raw write/edit event log; without it, only the latest version of each
+// file would ever be visible, and a user couldn't compare "what changed."
 function ArchiveSection({ files, onPreviewFile }) {
   const [open, setOpen] = useState(false)
 
@@ -406,6 +537,11 @@ function ArchiveSection({ files, onPreviewFile }) {
 
 // ─── SessionItem ─────────────────────────────────────────────────────────────
 
+// A conversation with no custom nickname yet is labeled by its POSITION
+// among all conversations ("Conversation 3"), oldest first — with the very
+// first one this browser ever knew about called "Original" once other
+// conversations exist, so a returning user can always tell which one they
+// started with.
 function sessionFallbackName(sessions, id) {
   const i = sessions.findIndex(s => s.id === id)
   if (i === -1) return 'Conversation'
@@ -413,6 +549,17 @@ function sessionFallbackName(sessions, id) {
   return pos === 1 && sessions.length > 1 ? 'Original' : `Conversation ${pos}`
 }
 
+// One row in the sidebar's conversation list. When it's the ACTIVE
+// conversation, it expands to show that conversation's output files and a
+// "Build PBIP" button — the actual end goal of this whole pipeline: turning
+// the AI-authored dashboard_spec.json/semantic_model.json into a real,
+// downloadable Power BI project folder (a .pbip project) that opens directly
+// in Power BI Desktop. That conversion itself is deliberately NOT done by
+// the AI — it calls out to the separate, deterministic `builder` service
+// (see the builder/ directory) precisely because turning a spec into exact,
+// valid Power BI file formats is the kind of mechanical, must-be-precisely-
+// correct task regular code does more reliably than an AI model free-styling
+// file contents from scratch.
 function SessionItem({
   session, fallbackName, isActive, onSwitch, onRename, onPin,
   sessionFiles = [], fetching = false, fetched = false, onFetchFiles,
@@ -633,6 +780,10 @@ function SessionItem({
 
 // ─── ConversationHeader ───────────────────────────────────────────────────────
 
+// The editable conversation title shown above the message thread — click to
+// rename, same pattern as the rename control in the sidebar's SessionItem
+// (two separate places a user can rename the same conversation, both
+// writing to the same underlying `sessions` state in the main component).
 function ConversationHeader({ name, fallback, onRename }) {
   const [editing, setEditing]   = useState(false)
   const [editName, setEditName] = useState('')
@@ -683,11 +834,18 @@ function fmtDuration(sec) {
 
 function fmtCost(n) { return n == null ? '—' : `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}` }
 
+// The entire left-hand panel: agent status indicator, the always-visible
+// cost/token summary strip, the conversation list (each row rendered by
+// SessionItem above), and the detailed token-usage/cost breakdown panel.
+// This is the "control room" of the app — everything here is either
+// navigation (switch/rename/pin conversations) or observability (how much
+// is this costing, what files exist) rather than the conversation itself.
 function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onLinkSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, onRenameSession, onPinSession }) {
   const ref = useRef(null)
   const [sessionUsage, setSessionUsage]   = useState(null)
   const [runCost, setRunCost]             = useState(null)
   const [usageFetched, setUsageFetched]   = useState(false)
+  const [projectUsage, setProjectUsage]   = useState(null)
 
   useEffect(() => {
     gsap.from(ref.current, { x: -16, opacity: 0, duration: 0.55, ease: 'power3.out' })
@@ -710,9 +868,23 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
     } catch {}
   }, [activeSessionId])
 
+  // Total to date across every conversation in this project (server-side, so
+  // it reflects work done from any machine, not just this browser's history).
+  const fetchProjectUsage = useCallback(async () => {
+    try {
+      const res  = await fetch('/api/project-usage')
+      const data = await res.json()
+      if (!data.error) setProjectUsage(data)
+    } catch {}
+  }, [])
+
+  // Fetch once on load so the total is visible immediately, before any run in
+  // this tab — then again whenever a run finishes, so it stays current.
+  useEffect(() => { fetchProjectUsage() }, [fetchProjectUsage])
+
   useEffect(() => {
-    if (isIdle && hasMessages) fetchUsage()
-  }, [isIdle, hasMessages, fetchUsage])
+    if (isIdle && hasMessages) { fetchUsage(); fetchProjectUsage() }
+  }, [isIdle, hasMessages, fetchUsage, fetchProjectUsage])
 
   const sessIn    = sessionUsage?.input_tokens ?? 0
   const sessOut   = sessionUsage?.output_tokens ?? 0
@@ -755,6 +927,27 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
               {darkMode ? <Sun size={12} /> : <Moon size={12} />}
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Cost/token visibility strip — always rendered, never scrolled out of
+          view, so spend is visible the moment the interface is opened. */}
+      <div className="flex-shrink-0 px-4 py-2.5 border-b border-ink/10 bg-ink/[0.02]">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-[9px] tracking-[0.15em] uppercase text-ink/40">Project to date</span>
+          <span className="font-mono text-[11px] text-ink font-medium">
+            {projectUsage
+              ? `${fmtCost(projectUsage.totalCost)} · ${fmtTok(projectUsage.totalUsage.input + projectUsage.totalUsage.output)} tok`
+              : '—'}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2 mt-1">
+          <span className="font-mono text-[9px] tracking-[0.15em] uppercase text-ink/40">This conversation</span>
+          <span className="font-mono text-[11px] text-ink font-medium">
+            {runCost
+              ? `${fmtCost(runCost.total)} · ${fmtTok(sessIn + sessOut)} tok`
+              : '—'}
+          </span>
         </div>
       </div>
 
@@ -813,9 +1006,9 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
         <div className="px-4 py-4 border-t border-ink/10 mt-2">
           <div className="flex items-center justify-between mb-2.5">
             <span className="font-mono text-[10px] tracking-[0.15em] uppercase text-ink/50">Token Usage</span>
-            {hasMessages && usageFetched && (
+            {(projectUsage || (hasMessages && usageFetched)) && (
               <button
-                onClick={fetchUsage}
+                onClick={() => { fetchProjectUsage(); if (hasMessages) fetchUsage() }}
                 className="font-mono text-[10px] tracking-wider uppercase text-muted hover:text-red transition-colors"
               >
                 Refresh
@@ -823,8 +1016,29 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
             )}
           </div>
 
+          {projectUsage && (
+            <div className="mb-3 pb-3 border-b border-ink/10">
+              <p className="font-mono text-[10px] text-muted uppercase tracking-wider mb-1">
+                Project total · {projectUsage.sessionCount} conversation{projectUsage.sessionCount === 1 ? '' : 's'}
+              </p>
+              <p className="font-mono text-[13px] text-ink font-medium">
+                {fmtCost(projectUsage.totalCost)} · {fmtTok(projectUsage.totalUsage.input + projectUsage.totalUsage.output)} tok
+              </p>
+              {projectUsage.byAgent && Object.keys(projectUsage.byAgent).length > 1 && (
+                <ul className="mt-1.5 flex flex-col gap-0.5">
+                  {Object.entries(projectUsage.byAgent).map(([name, a]) => (
+                    <li key={name} className="flex items-center justify-between font-mono text-[10px] text-muted">
+                      <span className="truncate">{name}</span>
+                      <span className="flex-shrink-0 ml-2">{fmtTok(a.input + a.output)} tok · {fmtCost(a.cost)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           {!hasMessages ? (
-            <p className="font-mono text-[11px] text-muted leading-relaxed">Stats appear after first run.</p>
+            <p className="font-mono text-[11px] text-muted leading-relaxed">Per-conversation stats appear after first run.</p>
           ) : (
             <>
               {runCost && (
@@ -882,6 +1096,14 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+// The root component for the whole app (rendered directly by app/page.jsx).
+// It owns essentially all shared state — which conversation is active, the
+// message list, whether the agent is currently working — and passes pieces
+// of it down to Sidebar, the message components, and SetupPanels as props.
+// In React, state generally lives in the nearest shared ancestor of every
+// component that needs to read or change it; since the sidebar, the message
+// thread, and the input box all need to agree on "which conversation, is it
+// busy right now," that state has to live here, one level above all three.
 export default function ChatInterface() {
   const [messages, setMessages]       = useState([])
   const [input, setInput]             = useState('')
@@ -910,11 +1132,29 @@ export default function ChatInterface() {
   const bodyRef      = useRef(null)
   const inputAreaRef = useRef(null)
   const textareaRef  = useRef(null)
+  // These two accumulate data across MANY individual SSE events during one
+  // turn (see dispatchToAgent below) before being committed to real state
+  // once at the end — using refs here avoids triggering a re-render on every
+  // single streamed token-usage or narration event, only when it's actually
+  // time to show the final result.
   const turnUsageAccum     = useRef({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
   const turnNarrationAccum = useRef([])
+  // CONCEPT: The "stale closure" problem, and why this ref exists
+  // -----------------------------------------------------------------------
+  // `dispatchToAgent` (below) is defined ONCE and reused for many different
+  // sends — but JavaScript closures capture variables' values AT THE TIME
+  // the function was created, not fresh each call. If dispatchToAgent read
+  // `activeSessionId` directly, it would always see whatever conversation
+  // was active the moment it was defined, not the one active NOW if the user
+  // switched conversations in between. Keeping a ref in sync via this
+  // useEffect, and reading `.current` from it instead, sidesteps that trap —
+  // a ref's `.current` is always read fresh, live, at call time.
   const activeSessionIdRef = useRef(activeSessionId)
   useEffect(() => { activeSessionIdRef.current = activeSessionId }, [activeSessionId])
 
+  // Fetch the FULL reconstructed transcript for one conversation (see
+  // app/api/session-history/route.js) — used both on first load and whenever
+  // the user switches to a different conversation in the sidebar.
   const fetchHistory = useCallback(async (sid) => {
     setHistoryLoading(true)
     try {
@@ -924,7 +1164,10 @@ export default function ChatInterface() {
     setHistoryLoading(false)
   }, [])
 
-  // Bootstrap from localStorage on mount
+  // Bootstrap from localStorage on mount — "where was I last time I opened
+  // this app in this browser?" A brand new browser/profile has nothing
+  // saved, so it seeds one starter conversation (the shared reference
+  // session) rather than showing an empty, conversation-less sidebar.
   useEffect(() => {
     const stored = loadStorage()
     if (stored?.sessions?.length && stored.activeId) {
@@ -941,6 +1184,9 @@ export default function ChatInterface() {
     }
   }, [fetchHistory])
 
+  // Change which conversation is "active" — clears the message list (so old
+  // messages don't flash briefly before the new conversation's history
+  // loads) and kicks off fetchHistory for the newly-selected one.
   const switchSession = useCallback((sid) => {
     if (sid === activeSessionIdRef.current) return
     setActiveSessionId(sid)
@@ -1043,6 +1289,13 @@ export default function ChatInterface() {
     setFetching(false)
   }, [])
 
+  // The "Build PBIP" action from SessionItem: sends the two AI-authored IR
+  // files to the SEPARATE, deterministic `builder` service (a different app
+  // entirely — see builder/app.py) which turns them into real Power BI
+  // project files and streams back a downloadable .zip. This is the payoff
+  // moment of the whole pipeline: everything before this button was
+  // planning and drafting; this is where a real, usable artifact is
+  // produced.
   const buildPbip = useCallback(async () => {
     const specFile  = sessionFiles.find(f => f.name === 'dashboard_spec.json')
     const modelFile = sessionFiles.find(f => f.name === 'semantic_model.json')
@@ -1112,7 +1365,25 @@ export default function ChatInterface() {
     el.style.height = Math.min(el.scrollHeight, 140) + 'px'
   }, [])
 
+  // ==========================================================================
   // Core send — builds the streaming loop, used by sendMessage and regenerateFiles
+  // ==========================================================================
+  // This is the browser-side twin of app/api/chat/route.js's server-side SSE
+  // producer — one writes the live event stream, this reads it. It POSTs the
+  // user's message to our own `/api/chat` endpoint, then manually reads the
+  // HTTP response body as a raw byte stream (`res.body.getReader()`) rather
+  // than waiting for a normal, complete response — that's what lets replies,
+  // narration, and "thinking" indicators appear on screen progressively,
+  // in real time, instead of all at once after everything finishes.
+  //
+  // CONCEPT: Decoding a raw byte stream into discrete SSE messages
+  // -------------------------------------------------------------------------
+  // Network data doesn't arrive in neat, complete messages — a single chunk
+  // read from the stream might contain half of one event and all of the
+  // next. `buf` accumulates bytes across reads; splitting on `\n\n` (the SSE
+  // message separator, see app/api/chat/route.js's `send` helper) pulls out
+  // every COMPLETE message so far, while any trailing partial message is put
+  // back into `buf` to be finished off by the next chunk that arrives.
   const dispatchToAgent = useCallback(async (text) => {
     setAgentStatus('thinking')
     setThinkHint('thinking')
@@ -1150,25 +1421,43 @@ export default function ChatInterface() {
           try { data = JSON.parse(part.slice(6)) } catch { continue }
 
           if (data.type === 'thinking') {
+            // Generic or subagent-specific "working on it" hint (see
+            // SUBAGENT_HINTS server-side) — drives the ThinkingBubble text.
             setAgentStatus('thinking'); setThinkHint(data.hint || 'thinking')
           } else if (data.type === 'tool') {
             setAgentStatus('thinking'); setThinkHint(data.name ? `Using ${data.name}` : 'tool')
           } else if (data.type === 'narration') {
+            // One more "what a specialist just did/said" line — appended to
+            // the accumulator AND immediately reflected into `liveNarration`
+            // state so it's visible right away, not just once the whole
+            // turn finishes.
             const line = { agent: data.agent, text: data.text, time: ts() }
             turnNarrationAccum.current = [...turnNarrationAccum.current, line]
             setLiveNarration(turnNarrationAccum.current)
           } else if (data.type === 'usage') {
+            // Token counts from one individual model call — accumulated
+            // silently (no visible UI change per event) until 'done', when
+            // the running total becomes this turn's final usage badge.
             const a = turnUsageAccum.current
             a.input    += data.input    ?? 0
             a.output   += data.output   ?? 0
             a.cacheRead  += data.cacheRead  ?? 0
             a.cacheWrite += data.cacheWrite ?? 0
           } else if (data.type === 'message') {
+            // The coordinator's reply text, RE-SENT WHOLE each time it grows
+            // (not incremental deltas) — simplest possible way to render a
+            // streaming reply: just keep replacing the bubble's full text
+            // with whatever the latest snapshot is.
             setAgentStatus('streaming')
             setMessages((prev) =>
               prev.map((m) => (m.id === agentId ? { ...m, text: data.text } : m))
             )
           } else if (data.type === 'done') {
+            // The turn is genuinely over — freeze the accumulated usage and
+            // narration onto the message permanently (so it's still there
+            // after a page reload, matching what session-history/route.js
+            // would reconstruct), then clear the "live" versions since
+            // there's no longer an in-progress turn to show them for.
             const finalUsage = { ...turnUsageAccum.current }
             const finalNarration = [...turnNarrationAccum.current]
             setLastTurnUsage(finalUsage)
@@ -1216,6 +1505,15 @@ export default function ChatInterface() {
     if (sid) await dispatchToAgent(text)
   }, [agentStatus, createSessionAndSwitch, dispatchToAgent])
 
+  // Handles the send button / Enter key. The FIRST message of a brand new
+  // conversation is built differently from every later one: it stitches
+  // together the schema textarea, the business-context textarea, any
+  // attached files, and whatever's typed in the main input box into ONE
+  // long, clearly-labeled block of text (see the "## DATA MODEL SCHEMA" /
+  // "## BUSINESS CONTEXT" headers below) — this is the exact shape
+  // bi-planner's job description (bi-planner.agent.yaml) expects to receive
+  // as its very first input. Every message after that is just sent as
+  // plain, unstructured text, the same as any normal chat turn.
   const sendMessage = useCallback(async () => {
     if (agentStatus !== 'idle') return
 
@@ -1251,6 +1549,13 @@ export default function ChatInterface() {
     await dispatchToAgent(text)
   }, [input, agentStatus, schema, context, attachedFiles, messages, dispatchToAgent])
 
+  // The "Generate missing files →" recovery action shown when a conversation
+  // ended without producing dashboard_spec.json/semantic_model.json (e.g.
+  // the agent got sidetracked, or the user's brief was still being refined).
+  // Rather than a special-purpose code path, this just sends ANOTHER plain
+  // chat message asking the agent to catch up — the same mechanism as any
+  // normal user turn, demonstrating that "the agent skipped a step" is
+  // recoverable with an ordinary follow-up instruction, not a special reset.
   const regenerateFiles = useCallback(async (missingFiles) => {
     if (agentStatus !== 'idle') return
     const list = missingFiles.map(f => `- ${f}`).join('\n')
@@ -1273,6 +1578,11 @@ export default function ChatInterface() {
   const showThinking = (agentStatus === 'thinking' || thinkHint === 'tool') &&
     messages[messages.length - 1]?.role !== 'agent'
 
+  // The overall page layout: a fixed-width Sidebar on the left, the main
+  // conversation column in the middle (header, scrolling message list,
+  // input box), and the file PreviewPanel that slides out from the right
+  // only when a file is selected — three siblings in one horizontal flex
+  // row, matching the three-pane look of the rendered screenshot.
   return (
     <div className="flex h-screen bg-paper font-grotesk overflow-hidden">
 

@@ -1,4 +1,18 @@
 """
+WHAT THIS FILE IS, IN BUSINESS TERMS
+--------------------------------------
+This is the "template library" for visuals that deserve better, more
+polished output than the plain generic builder (`_build_visual_json` in
+agents/pbip_builder.py) produces on its own — e.g. a combo bar+line chart,
+which needs a more specific shape than the generic type-map logic knows how
+to build. A DESIGNER hand-authors one of these templates once; this file is
+what lets the builder reuse it, correctly filled in for THIS report's actual
+tables and measures, over and over.
+
+REMINDER: "skill" here is the VISUAL-TEMPLATE meaning, NOT an Anthropic
+Managed Agents Skill — see the top-of-file note in agents/pbip_builder.py
+for why this codebase uses the same word for two unrelated things.
+
 Skill registry + token-fill.
 
 A skill (`pbi-skills/<name>/`) is a validated, token-templated PBIR/TMDL recipe:
@@ -10,6 +24,16 @@ This module loads skills into a registry, resolves which skill builds a given IR
 visual, and fills a skill's templates from a token dict (the builder supplies
 geometry from IR `layout`, fields from the semantic model, display from
 `skill_params`, and fresh lineage/annotation IDs).
+
+CONCEPT: Template + token substitution (the "mail merge" pattern)
+-------------------------------------------------------------------------
+A skill's template files are mostly complete, valid `visual.json`/`.tmdl`
+content, except for a handful of placeholder tokens written as
+`<UPPER_SNAKE_CASE>` — e.g. `<CHART_TITLE>`, `<VOLUME_MEASURE_NAME>`. `fill()`
+below does the substitution: swap every `<TOKEN>` for its real value, and
+refuse to proceed if any token was left unfilled (a strong safety net —
+better to fail loudly with "you forgot to supply X" than silently ship a
+file with a literal `<CHART_TITLE>` string still in it).
 """
 from __future__ import annotations
 
@@ -27,6 +51,11 @@ TOKEN_RE = re.compile(r"<([A-Z0-9_]+)>")
 
 
 class Skill:
+    """In-memory representation of one loaded skill folder — its metadata
+    (name/description), its raw documentation body, and every template file
+    it owns (still with unfilled `<TOKEN>` placeholders in them at this
+    point; see `fill()` below for the step that actually substitutes real
+    values)."""
     def __init__(self, name: str, description: str, body: str,
                  templates: dict[str, str], path: Path):
         self.name = name
@@ -45,7 +74,15 @@ class Skill:
 
     def example_tokens(self) -> dict[str, str]:
         """Token → example value, parsed from the SKILL.md Token Table.
-        Handles grouped rows like `<A> / <B>` with examples `1 / 2`."""
+        Handles grouped rows like `<A> / <B>` with examples `1 / 2`.
+
+        These example values double as SAFE DEFAULTS: `_skill_tokens` in
+        agents/pbip_builder.py starts from this exact dict and only
+        overrides the specific tokens it actually has real data for (fields,
+        geometry, IDs), leaving the designer-authored example values in
+        place for anything more cosmetic (e.g. axis-label formatting) that
+        this report's data doesn't need to override.
+        """
         rows = mdutil.parse_table(mdutil.extract_section(self.body, "Token Table"))
         out: dict[str, str] = {}
         for r in rows:
@@ -64,7 +101,13 @@ class Skill:
 
 
 def load_skills(root: Path = PBI_SKILLS_DIR) -> dict[str, Skill]:
-    """Scan `root` for `*/SKILL.md` and build the registry keyed by skill name."""
+    """Scan `root` for `*/SKILL.md` and build the registry keyed by skill name.
+
+    This is a one-time "index the library" pass — walk every subfolder,
+    read its SKILL.md and template files off disk, and hold them all in
+    memory as `Skill` objects so the rest of the builder can look one up by
+    name instantly rather than re-reading files from disk on every visual.
+    """
     registry: dict[str, Skill] = {}
     if not root.is_dir():
         return registry
@@ -86,7 +129,14 @@ def load_skills(root: Path = PBI_SKILLS_DIR) -> dict[str, Skill]:
 
 def resolve_skill(visual: dict, registry: dict[str, Skill]) -> Skill | None:
     """Pick the skill that builds this IR visual. Explicit `skill` wins; otherwise
-    None ⇒ caller falls back to the minimal builder path."""
+    None ⇒ caller falls back to the minimal builder path.
+
+    Skill selection is intentionally NOT automatic/guessed — the AI design
+    stage explicitly names which skill a visual should use (via the IR's
+    `skill` field, e.g. "line-column-combo-chart"), the same way a person
+    filling out an order form picks an exact product code rather than the
+    system guessing what they probably meant.
+    """
     name = visual.get("skill")
     if name and name in registry:
         return registry[name]
@@ -113,6 +163,12 @@ def fill(skill: Skill, tokens: dict) -> dict[str, str]:
 
 
 # ── ID helpers (PBIR requires fresh lineage tags + annotation IDs) ──────────────
+# Power BI's file format expects certain fields to be globally unique
+# identifiers (so it can track, e.g., "this specific visual" even if it gets
+# renamed) — these three helpers are just different flavors of "generate a
+# fresh random unique ID," each formatted the way a particular field expects
+# it (a standard UUID string, a 32-character hex string, or a shorter
+# 20-character one).
 
 def new_lineage_tag() -> str:
     """UUID for lineageTag fields."""
@@ -130,6 +186,10 @@ def new_visual_name() -> str:
 
 
 if __name__ == "__main__":
+    # A self-test: load every skill on disk and confirm each one's own
+    # documented EXAMPLE values are enough to fill it completely without
+    # error — a quick way to catch a broken/miswritten skill template during
+    # development, independent of running the whole pipeline.
     reg = load_skills()
     print(f"loaded {len(reg)} skills: {list(reg)}")
     for name, sk in reg.items():

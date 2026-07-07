@@ -1,4 +1,19 @@
 """
+WHAT THIS FILE IS, IN BUSINESS TERMS
+--------------------------------------
+NOTE ON THIS FILE'S STATUS: nothing else in this codebase currently imports
+or calls this module — it isn't wired into the live pipeline. It appears to
+be an earlier prototype of "write a whole .pbip project from scratch,"
+producing a SIMPLER, non-PBIR project layout (one big report.json, one
+model.tmdl) than the format the live pipeline actually targets today. That
+live approach — adding PBIR pages/visuals into an EXISTING project Power BI
+Desktop already scaffolded — lives in agents/pbip_builder.py instead, and is
+a meaningfully different strategy (this file builds a project from nothing;
+pbip_builder.py only ever adds pages into a project Desktop already created
+and still partly owns). Kept here as a reference/historical artifact rather
+than deleted, but a reader following the REAL, currently-running pipeline
+should treat agents/pbip_builder.py as the authoritative implementation.
+
 Writes the .pbip project folder structure that Power BI Desktop can open.
 
 Output layout (matching the PBIP 1.0 format):

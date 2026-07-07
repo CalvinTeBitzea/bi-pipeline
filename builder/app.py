@@ -1,5 +1,49 @@
 """
-Flask entry point for Vercel deployment — POST /api/build
+WHAT THIS FILE IS, IN BUSINESS TERMS
+--------------------------------------
+This is the actual web server (nicknamed "bi-cohost" elsewhere in this
+project) that the chat app in `agent/` talks to over the public internet
+whenever it needs REAL, deterministic work done — not AI judgment, but exact
+file validation and generation. It's the other end of two specific wires:
+
+  1. bi-authoring's `validate_ir` custom tool (see
+     agent/app/api/chat/route.js's `runValidateIr`) calls THIS file's
+     `/api/validate` endpoint to get a real pass/fail verdict on the AI's
+     design output — using the exact same gates the real build uses, not a
+     separate, potentially-inconsistent re-implementation.
+  2. The "Build PBIP" button in the chat UI (see
+     agent/components/ChatInterface.jsx's `buildPbip`) calls THIS file's
+     `/api/build` endpoint to actually produce the downloadable .zip of real
+     Power BI files.
+
+Both endpoints are thin HTTP wrappers around the SAME underlying pipeline
+logic used by the command-line `conductor.py` (see agents/conductor.py) —
+this file doesn't reimplement anything, it just exposes that existing logic
+over the web so a browser-based chat app (which can't run a local Python CLI
+itself) can trigger it remotely.
+
+CONCEPT: Flask — a minimal web framework for Python
+-------------------------------------------------------------------------
+Flask is the Python equivalent of what Next.js's API routes are for
+JavaScript (see agent/app/api/*/route.js): a way to turn a plain function
+into a real HTTP endpoint. `@app.route("/api/build", methods=["POST"])`
+declares "when a POST request arrives at this URL, run this function" — the
+same underlying idea as Next.js's file-based routing, just spelled
+differently in a different language/framework.
+
+CONCEPT: CORS — why a server has to explicitly allow being called from a browser
+---------------------------------------------------------------------------------
+This service and the chat app in `agent/` are two SEPARATE deployments (this
+one's nickname is "bi-cohost," commonly deployed to Vercel), likely on
+different domains. Browsers block a web page from calling a different
+domain's API by default, as a security measure (stopping a malicious site
+from silently calling your bank's API using your logged-in session, for
+instance) — unless that other domain explicitly opts in via special
+response headers. The `_cors` helper and the `OPTIONS` "preflight" routes
+below exist purely to say "yes, it's fine for a browser page on a different
+domain to call this endpoint" — without them, every request from the chat
+app would be silently blocked by the browser itself, never even reaching
+this code.
 """
 import io
 import json
@@ -31,11 +75,21 @@ def _cors(response):
 
 @app.route("/api/build", methods=["OPTIONS"])
 def build_preflight():
+    # The browser sends this "preflight" OPTIONS request automatically,
+    # BEFORE the real POST, purely to ask "am I allowed to do this?" — this
+    # handler's only job is to answer "yes" via the CORS headers above.
     return _cors(app.response_class("", 200))
 
 
 @app.route("/api/build", methods=["POST"])
 def build():
+    """The real "turn this design into a downloadable Power BI project"
+    endpoint — runs the full ingest + PBIR-build pipeline (the same two
+    stages conductor.py's CLI runs), then packages the result as a .zip a
+    browser can download directly, rather than leaving files sitting on
+    this server's own disk (which, on this file's temporary-artifact-folder
+    approach, gets deleted again immediately after — see the `shutil.rmtree`
+    call below)."""
     try:
         body     = request.get_json(force=True)
         spec     = body["dashboard_spec"]
@@ -47,6 +101,16 @@ def build():
 
         pages_dir = artifact_path(build_id, "report.pbir") / "definition" / "pages"
 
+        # CONCEPT: Building a .zip file entirely in memory
+        # `io.BytesIO()` is an in-memory "file" — the zip is assembled
+        # without ever needing to write an intermediate .zip file to disk,
+        # then handed straight to the browser as a download. Two kinds of
+        # content go in: the generated PBIR page/visual files (which a user
+        # drops directly into their existing .Report/definition/pages/
+        # folder), and any TMDL fragments a skill produced (which need to be
+        # copied manually into the SemanticModel project — this pipeline
+        # writes the report pages but doesn't touch the semantic model
+        # project files directly).
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             # pages/ content → extract into .Report/definition/pages/
@@ -58,6 +122,10 @@ def build():
                 zf.writestr(f"tmdl/{fname}", tmdl_text)
         zip_bytes = buf.getvalue()
 
+        # Clean up the temporary build artifacts on this server now that
+        # they're safely packaged into the zip response — this server isn't
+        # meant to be a permanent store of anyone's build output, only a
+        # transient work area for the duration of one request.
         shutil.rmtree(pages_dir.parent.parent.parent, ignore_errors=True)
 
         response = send_file(
@@ -89,6 +157,13 @@ def validate():
     CLI validator) is out of scope here — it needs a Desktop-scaffolded
     .Report folder and the CLI installed alongside this Vercel runtime, which
     remains unproven (see builder/PICKUP.md).
+
+    This is the single most business-critical endpoint in the whole builder:
+    it's what lets an AI agent (bi-authoring) get an OBJECTIVE, ground-truth
+    answer to "is this design actually correct?" instead of just trusting
+    its own (or another model's) self-assessment — see agent/agent-configs/
+    bi-authoring.agent.yaml's job description, which explicitly requires
+    calling this before ever telling the coordinator a design is ready.
     """
     build_id = "validate_" + uuid.uuid4().hex[:8]
     try:

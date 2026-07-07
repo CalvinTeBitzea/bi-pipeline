@@ -1,13 +1,45 @@
+// WHAT THIS FILE IS, IN BUSINESS TERMS
+// -------------------------------------
+// This is the "before you start" form the user fills in above the chat box:
+// paste in your data model (which tables/columns exist), describe the
+// business context, and optionally attach files. It's the equivalent of an
+// intake form a consultant would hand a new client before the first meeting
+// — the AI planning agent's very first message (see bi-planner.agent.yaml)
+// is written assuming it will receive exactly this shape of information.
+//
+// CONCEPT: 'use client' — code that must run in the USER's browser
+// -------------------------------------------------------------------------
+// Next.js, by default, tries to run as much of a page's code as possible on
+// the SERVER (faster initial load, less code sent to the browser). But
+// anything that needs live interactivity — reacting to typing, drag-and-drop,
+// button clicks — has to run in the browser itself. The `'use client'`
+// directive at the top of this file is how you opt a component OUT of the
+// server-only default and mark it as needing to run client-side. Every file
+// in this app with real interactivity (this one, ChatInterface.jsx) starts
+// this way.
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { gsap } from 'gsap'
 import { Upload, X, FileText, AlertCircle } from 'lucide-react'
 
+// File types we can't read as plain text in the browser (they're compressed/
+// binary formats — an Excel file isn't just text, for instance). These still
+// get uploaded and handed to the agent, which has its own way of extracting
+// text from them server-side; we just can't preview/estimate their token
+// cost here in the browser the way we can for a plain-text file.
 const BINARY_EXTENSIONS = new Set(['xlsx', 'xls', 'docx', 'doc', 'pdf', 'pptx', 'ppt'])
 
 function getExt(f) { return f.split('.').pop().toLowerCase() }
 
+// CONCEPT: FileReader — reading a file the user picked, entirely in-browser
+// -------------------------------------------------------------------------
+// When a user attaches a file, the browser hands this code a `File` object
+// that's really just a reference/handle — the actual bytes aren't
+// automatically loaded into memory as text. `FileReader` is the browser's
+// built-in API for actually reading those bytes; `readAsText` decodes them
+// as a string, which is what lets this component show a live "~2.3k tokens"
+// estimate before the file is ever sent anywhere.
 async function readUploadedFile(file) {
   const ext = getExt(file.name)
   const id  = `${file.name}-${file.size}`
@@ -20,16 +52,31 @@ async function readUploadedFile(file) {
   })
 }
 
+// CONCEPT: "Controlled" form fields — the parent component owns the truth
+// -------------------------------------------------------------------------
+// Notice this component receives `schema`/`context`/`files` as PROPS (data
+// passed down from its parent, ChatInterface.jsx) along with `onSchemaChange`
+// etc. callbacks, rather than keeping its own independent copy of what the
+// user typed. This is the standard React pattern of a "controlled
+// component": the parent is the single source of truth for the data, and
+// this component's only job is to display it and report back every keystroke
+// or file drop — so ChatInterface.jsx can, for instance, bundle this data
+// into the very first message sent to the agent when the user hits send.
 export default function SetupPanels({ schema, onSchemaChange, context, onContextChange, files, onFilesChange }) {
   const wrapRef      = useRef(null)
   const fileInputRef = useRef(null)
   const [dragging, setDragging] = useState(false)
 
+  // A one-time entrance animation (fade + slide up) the moment this panel
+  // first appears — purely cosmetic polish, unrelated to functionality.
   useEffect(() => {
     gsap.from(wrapRef.current, { opacity: 0, y: 10, duration: 0.4, ease: 'power2.out' })
   }, [])
 
   const handleFiles = useCallback(async (rawFiles) => {
+    // Read every newly-added file in parallel (Promise.all), then merge them
+    // into the existing file list — de-duplicating by name+size so dragging
+    // the same file in twice doesn't create two entries.
     const incoming = await Promise.all(Array.from(rawFiles).map(readUploadedFile))
     onFilesChange((prev) => {
       const seen = new Set(prev.map((f) => f.id))
@@ -43,11 +90,18 @@ export default function SetupPanels({ schema, onSchemaChange, context, onContext
   return (
     <div ref={wrapRef} className="flex flex-col gap-2 w-full">
 
-      {/* Schema */}
+      {/* Schema — the user pastes their table/column structure as plain
+          text (no need for a real database connection); the planning agent
+          is told to treat this as ground truth and never invent columns
+          beyond what's listed here. */}
       <div className="border border-ink/15 rounded-lg overflow-hidden">
         <div className="flex items-center justify-between px-3 py-1.5 bg-surface/50 border-b border-ink/10">
           <span className="font-mono text-[9px] tracking-[0.15em] uppercase text-muted">Data Model</span>
           {schema.length > 0 && (
+            // A rough, client-side "characters ÷ 4" token estimate — cheap
+            // and fast, though not exactly how the real model tokenizes
+            // text; good enough to warn a user their input is getting large
+            // before they ever send it (and before it costs real money).
             <span className="font-mono text-[9px] text-muted">~{Math.round(schema.length / 4).toLocaleString()} tok</span>
           )}
         </div>
@@ -60,7 +114,9 @@ export default function SetupPanels({ schema, onSchemaChange, context, onContext
         />
       </div>
 
-      {/* Context + file drop */}
+      {/* Context + file drop — free-text business background, plus a
+          drag-and-drop zone for supporting documents (specs, sample
+          exports, etc). */}
       <div
         className={`border rounded-lg overflow-hidden transition-colors duration-150 ${
           dragging ? 'border-red/40 bg-red/5' : 'border-ink/15'
@@ -79,6 +135,9 @@ export default function SetupPanels({ schema, onSchemaChange, context, onContext
             <Upload size={9} />
             Attach
           </button>
+          {/* A hidden native file-picker input — clicking the visible
+              "Attach" button above just forwards the click to this, since
+              native file inputs are hard to style directly. */}
           <input
             ref={fileInputRef}
             type="file"

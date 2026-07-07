@@ -1,9 +1,39 @@
 """
+WHAT THIS FILE IS, IN BUSINESS TERMS
+--------------------------------------
+A small set of text-parsing helpers used to read the "skill" template files
+(see lib/skills.py — the VISUAL-TEMPLATE meaning of "skill," not the AI
+Skills API meaning; see pbip_builder.py's top-of-file note for that
+distinction). Those skill files are written as ordinary Markdown documents
+(with a small metadata header and tables) BECAUSE that's a genuinely
+convenient, human-editable authoring format for a designer to hand-write a
+new chart template in — this file is what lets code reach back INTO that
+human-friendly document and pull out just the structured pieces (a name,
+description, and a token/example table) that the builder needs to actually
+use it.
+
 Tiny markdown helpers shared by the skill and template registries.
 
 SKILL.md and TEMPLATE.md are authored as human-readable markdown with YAML-ish
 frontmatter, GitHub-style tables, and `##` sections. These helpers parse just
 enough of that to drive the registries — no full markdown dependency.
+
+CONCEPT: "Frontmatter" — small structured metadata at the top of a document
+-------------------------------------------------------------------------
+Frontmatter is a common convention (used by this project, and by many
+static-site/blogging tools) for attaching a few key-value facts to an
+otherwise free-form document, set off by `---` lines at the very top:
+
+    ---
+    name: combo-chart
+    description: A bar+line combo visual
+    ---
+    ## Rest of the document as normal prose...
+
+`parse_frontmatter` below is what splits a file into "the metadata" and "the
+rest of the document" — it deliberately only understands simple `key: value`
+lines, not full YAML syntax, since that's all this project's own files
+actually use.
 """
 import re
 
@@ -33,6 +63,12 @@ def extract_section(text: str, heading_substr: str) -> str:
     """Return the body of the first `##`/`###` section whose title contains
     `heading_substr` (case-insensitive), up to the next heading of level <= 2.
     Empty string if not found.
+
+    This is how lib/skills.py finds the "Token Table" section inside a
+    SKILL.md file without needing to know exactly where in the document it
+    appears — it just searches for a matching heading and reads until the
+    next one, the same way a person skimming a document's table of contents
+    would jump straight to a named section.
     """
     lines = text.splitlines()
     start = None
@@ -55,6 +91,14 @@ def parse_table(chunk: str) -> list[dict]:
 
     Returns a list of row dicts keyed by header cell text. Cells are stripped.
     The `|---|` separator row is skipped. Returns [] if no table is present.
+
+    A Markdown table like:
+        | Token | Example |
+        |-------|---------|
+        | <FOO> | 42      |
+    becomes `[{"Token": "<FOO>", "Example": "42"}]` — one dict per data row,
+    keyed by the header text, the same shape you'd get reading a CSV file
+    into a list of dicts.
     """
     rows = [ln for ln in chunk.splitlines() if ln.strip().startswith("|")]
     if len(rows) < 2:

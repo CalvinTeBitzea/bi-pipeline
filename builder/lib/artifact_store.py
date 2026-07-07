@@ -1,7 +1,28 @@
+# WHAT THIS FILE IS, IN BUSINESS TERMS
+# -------------------------------------
+# The builder's "filing cabinet." Every build gets its own folder (named
+# after its `build_id`) under `artifacts/`, holding every intermediate and
+# final file that build produced — the validated IR, the build result
+# summary, and a small marker file per completed stage. This is what lets
+# conductor.py's `_step` helper skip a stage that's already finished (see
+# `is_stage_done`/`mark_stage_done` below) — a simple, file-based way of
+# remembering "how far did this build get" without needing an actual
+# database.
+#
+# CONCEPT: A "marker file" as the simplest possible way to record a fact
+# -------------------------------------------------------------------------
+# `mark_stage_done` doesn't write any actual content — it just creates an
+# empty file named e.g. `.ingest.done`. `is_stage_done` then just checks
+# whether that file EXISTS. This is a deliberately minimal way to record a
+# yes/no fact ("did this finish?") on disk, without needing a database or
+# even any file content — the file's mere presence IS the answer.
 import json
 import os
 from pathlib import Path
 
+# Where all builds' artifacts live — overridable via an environment variable
+# (e.g. to point at a different disk/volume in a deployed environment),
+# defaulting to a folder alongside this code when not set.
 _BASE = Path(os.environ.get("ARTIFACT_ROOT", str(Path(__file__).parent.parent / "artifacts")))
 
 

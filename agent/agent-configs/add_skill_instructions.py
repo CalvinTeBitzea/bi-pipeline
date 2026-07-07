@@ -1,14 +1,39 @@
 """
-Add explicit nudges pointing bi-design/bi-authoring at their attached Microsoft
-skills (see upload_skills.py/apply_skills.py). Live verification showed the
-"agent automatically uses skills when relevant" behavior is real (bi-planner
-read its skill unprompted, first action) but didn't fire for bi-design/
-bi-authoring on a well-worn repeat test brief already covered by memory + the
-house design brief. Same lesson as the memory store: a mount existing isn't
-always enough on its own -- an explicit instruction materially improved usage
-then, so apply the same fix here.
+WHAT THIS SCRIPT IS, IN BUSINESS TERMS
+---------------------------------------
+This is a follow-up fix to apply_skills.py. After attaching the Microsoft
+reference guides to bi-design/bi-authoring, a live test showed something
+important and slightly counter-intuitive: just because an agent CAN open a
+reference file doesn't mean it reliably WILL, especially on a task it's
+already confident about. In this test, bi-planner (which had never handled
+this kind of request before) read its guide unprompted, on its very first
+move — proof the underlying mechanism genuinely works. But bi-design and
+bi-authoring, working a familiar, well-worn test scenario already well
+covered by the memory-lessons folder and the house style brief, skipped
+their guides entirely.
 
-Idempotent: checks for an existing "## Skills" section before appending.
+The fix mirrors a lesson already learned once in this project (see the
+memory-store work, and add_memory_instructions.py): giving an agent access
+to something isn't the same as it reliably remembering to use that access at
+the right moment — an explicit, direct pointer in the instructions closes
+that gap. This script adds that pointer.
+
+CONCEPT: "Automatic" tool/skill usage is a tendency, not a guarantee
+------------------------------------------------------------------------
+Foundation models decide for themselves, at each step, whether a given tool
+or reference is worth consulting for the task in front of them — there's no
+hard rule forcing it. That's usually a feature (it keeps the agent from
+wastefully reading every reference file on every trivial task), but it means
+that for cases where you specifically want a resource consulted every time
+— e.g. a compliance checklist, a style guide, or, here, a design-quality
+review step — you often need to say so explicitly rather than relying on
+the model's own judgment of relevance. This is a very common pattern when
+building on top of LLMs: capability != reliability, and closing that gap
+usually means writing it into the instructions rather than assuming it.
+
+Idempotent: checks for an existing "## Skills" section before appending
+(same discipline as add_memory_instructions.py, so this script is safe to
+re-run without appending duplicate sections).
 
 Run once from agent/agent-configs/:
     python3 add_skill_instructions.py
@@ -24,6 +49,11 @@ load_dotenv(HERE.parent / ".env.local")
 BI_DESIGN_ID    = "agent_01Auw9HmVhn71m97DEwPGkui"
 BI_AUTHORING_ID = "agent_014pXjcphcdvysd5PQKhyBBf"
 
+# The addendum tells bi-design not just THAT the reference guides exist, but
+# WHEN to reach for them (before writing the output files, not after) and
+# HOW to use them efficiently (follow the guide's own "which page do I need"
+# routing table, rather than reading everything cover to cover every time —
+# the same progressive-disclosure idea explained in upload_skills.py).
 DESIGN_ADDENDUM = """
 
 ## Skills
@@ -41,6 +71,11 @@ dax-guidelines.md before writing a measure) rather than reading everything
 up front.
 """
 
+# bi-authoring's version ties the same instruction to its specific job
+# (quality review, step 4 of its process) and explicitly warns off the one
+# thing that would go wrong if it tried to follow the (already-stripped) CLI
+# instructions some of this reference material's SOURCE files still describe
+# elsewhere — see upload_skills.py for why those sections were removed.
 AUTHORING_ADDENDUM = """
 
 ## Skills

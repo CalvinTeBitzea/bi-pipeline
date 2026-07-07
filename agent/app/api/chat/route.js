@@ -1,3 +1,41 @@
+// ============================================================================
+// WHAT THIS FILE IS, IN BUSINESS TERMS
+// ============================================================================
+// This is the single most important file in the chat app: it's the bridge
+// between "the user typed a message and hit send" and "the AI agent team
+// actually goes and does the work, live, with the user watching it happen."
+// Every message a customer sends in the chat UI ends up here.
+//
+// It has two jobs:
+//   1. Forward the user's message into the running agent conversation.
+//   2. Open a live connection back to the browser and relay everything the
+//      agent team does — its replies, which specialist is working, and any
+//      "I need you to run this for me" requests — as it happens, not after
+//      the fact. This is what powers the "watch it think" narration feature
+//      in the chat UI.
+//
+// CONCEPT: This is a Next.js "API route" — a mini web server endpoint
+// ------------------------------------------------------------------------------
+// Next.js (the framework this app is built with) lets you define a backend
+// HTTP endpoint just by exporting a function named after the HTTP verb
+// (`POST`, `GET`, etc.) from a file at a matching URL path. This file lives
+// at `app/api/chat/route.js`, so it automatically becomes the real server
+// endpoint `POST /api/chat` — no separate server setup required. The
+// browser-side chat component calls `fetch('/api/chat', ...)` and this is
+// the code that runs in response, on Anthropic's/Vercel's servers, not in
+// the user's browser.
+//
+// CONCEPT: Streaming a response as Server-Sent Events (SSE)
+// ------------------------------------------------------------------------------
+// A normal API call sends one request, waits, and gets back one full
+// response. That doesn't work well here — an agent run can take minutes,
+// and we want the user to see progress the whole time, not stare at a
+// spinner. Instead, this route immediately returns a `ReadableStream` with
+// the MIME type `text/event-stream` and then keeps writing small chunks of
+// data into it (`send({...})` below) for as long as the agent run
+// continues. The browser reads this the same way it reads a live news
+// ticker — a continuous trickle of updates over one open connection —
+// rather than one big finished document.
 import Anthropic from '@anthropic-ai/sdk'
 import { summarizeValidateResult, summarizeToolCall } from '../../../lib/activity'
 
@@ -15,6 +53,21 @@ const SUBAGENT_HINTS = {
 // Allow up to 5-minute responses for long agent runs
 export const maxDuration = 300
 
+// ----------------------------------------------------------------------------
+// CONCEPT: Custom tools put YOU in charge of running the real logic
+// ----------------------------------------------------------------------------
+// bi-authoring's job description (see bi-authoring.agent.yaml) includes a
+// "custom" tool called `validate_ir`. Unlike a built-in tool (read/write/
+// etc — executed automatically inside Anthropic's own sandbox), a custom
+// tool is a placeholder: when the agent "calls" it, the platform pauses and
+// waits for OUR server to actually perform the action and hand back a
+// result. This function is that action: it takes whatever IR (dashboard
+// spec + semantic model) the agent produced and forwards it to the real,
+// separately-deployed validation service (the "builder"/"bi-cohost" app)
+// over plain HTTP, then relays whatever verdict comes back. This is the
+// standard "function calling" / "tool use" pattern used across most AI
+// agent platforms — the model decides WHEN and WITH WHAT ARGUMENTS to call
+// something, but never runs the logic itself.
 async function runValidateIr(input) {
   try {
     const res = await fetch(`${BICOHOST_URL}/api/validate`, {
@@ -28,6 +81,9 @@ async function runValidateIr(input) {
     const parsed = await res.json()
     return { text: JSON.stringify(parsed), isError: false, parsed }
   } catch (err) {
+    // A network/plumbing failure is reported differently than "your file
+    // failed validation" — the agent needs to know it's an infrastructure
+    // problem it can't fix by editing the spec, not a real quality issue.
     const parsed = { valid: false, error: err?.message ?? String(err) }
     return { text: JSON.stringify(parsed), isError: true, parsed }
   }
@@ -49,6 +105,10 @@ export async function POST(request) {
 
   const readable = new ReadableStream({
     async start(controller) {
+      // `send` is the one function every event handler below uses to push a
+      // piece of data down to the browser. The `data: ...\n\n` framing is
+      // the exact wire format Server-Sent Events requires — the browser's
+      // built-in EventSource/fetch-stream reader knows to split on it.
       const send = (data) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
 
@@ -58,16 +118,29 @@ export async function POST(request) {
       // validate_ir narration line.
       const threadAgentNames = {}
 
-      // Each subagent thread gets its own event stream, since a subagent's
-      // agent.message/agent.tool_use events never appear on the primary
-      // stream — only on the thread's own. One fire-and-forget consumer per
-      // thread; threadId -> AbortController so we can tear them all down if
-      // the client disconnects, tasks collected so the outer finally can
-      // await them before closing the SSE writer.
+      // --------------------------------------------------------------------
+      // CONCEPT: Why a coordinator conversation needs MULTIPLE live streams
+      // --------------------------------------------------------------------
+      // Remember the org-chart picture from apply.py: the coordinator
+      // delegates to specialist subagents by opening a private "thread"
+      // (its own mini sub-conversation) with each one. Crucially, what a
+      // subagent SAYS and WHICH TOOLS IT CALLS only ever show up in that
+      // thread's OWN event stream — never on the main/primary stream the
+      // user is watching. So to narrate "bi-design just wrote
+      // dashboard_spec.json" live, in real time, we have to separately
+      // subscribe to bi-design's own private thread stream too, not just
+      // the primary one. This is a fan-out: one primary stream (the
+      // coordinator's own conversation) plus one extra live stream PER
+      // active subagent thread, all running concurrently, all feeding the
+      // same `send()` pipe back to the browser.
       const subagentControllers = {}
       const subagentTasks       = []
 
       function startSubagentNarration(threadId, agentName) {
+        // Each subagent stream gets its own AbortController so we can
+        // deliberately stop listening to it (e.g. when the browser
+        // disconnects, or the whole turn ends) without waiting for the
+        // subagent itself to naturally finish.
         const controller2 = new AbortController()
         subagentControllers[threadId] = controller2
         const task = (async () => {
@@ -83,11 +156,22 @@ export async function POST(request) {
               // which is the only place that answers it. Handling it here
               // too would risk a second real call to /api/validate.
               if (event.type === 'agent.message') {
+                // The subagent's own words — e.g. bi-design explaining a
+                // design decision, or bi-authoring quoting a validation
+                // error. This is exactly the "inline narration" content the
+                // chat UI shows collapsed under each coordinator reply.
                 const text = (event.content ?? []).map((b) => b.text ?? '').join('')
                 if (text) send({ type: 'narration', agent: agentName, text })
               } else if (event.type === 'agent.tool_use') {
+                // Turn a raw tool call (e.g. {name:'write', input:{file_path:...}})
+                // into a short human sentence like "write dashboard_spec.json" —
+                // see lib/activity.js for that translation.
                 send({ type: 'narration', agent: agentName, text: summarizeToolCall(event.name, event.input) })
               } else if (event.type === 'session.thread_status_idle') {
+                // This subagent thread has nothing left to do — unless it's
+                // just paused waiting on a tool result we haven't sent yet
+                // (requires_action), in which case there's more narration
+                // coming and we should keep listening.
                 if (event.stop_reason?.type !== 'requires_action') break
               } else if (event.type === 'session.thread_status_terminated') {
                 break
@@ -105,17 +189,28 @@ export async function POST(request) {
       }
 
       try {
+        // The PRIMARY stream: the coordinator's own conversation with the
+        // user. Everything the user sees by default (replies, "thinking",
+        // which stage is active) comes from this loop; the subagent
+        // narration streams above are an ADDITIONAL layer feeding the same
+        // `send()` pipe concurrently.
         const stream = await client.beta.sessions.events.stream(SESSION_ID, { betas: [BETA] })
 
         for await (const event of stream) {
           const t = event.type
 
           if (t === 'agent.message') {
+            // The coordinator's own reply text to the user.
             const text = (event.content ?? []).map((b) => b.text ?? '').join('')
             send({ type: 'message', text })
           } else if (t === 'agent.thinking') {
+            // A signal (no content) that the model is reasoning before
+            // producing its next visible output — used to show a "thinking"
+            // indicator in the UI.
             send({ type: 'thinking' })
           } else if (t === 'agent.tool_use') {
+            // A tool call made directly by the coordinator itself (rare —
+            // it mostly just delegates), shown as a generic tool badge.
             send({ type: 'tool', name: event.name ?? 'tool' })
           } else if (t === 'agent.custom_tool_use') {
             // bi-authoring's validate_ir tool — call the deterministic builder
@@ -128,6 +223,9 @@ export async function POST(request) {
             if (event.name === 'validate_ir') {
               const { text, isError, parsed } = await runValidateIr(event.input ?? {})
               send({ type: 'narration', agent, text: `validate_ir → ${summarizeValidateResult(parsed)}` })
+              // Answering the tool call: this is what lets the paused agent
+              // conversation continue. Without sending this event back, the
+              // session would sit waiting forever.
               await client.beta.sessions.events.send(SESSION_ID, {
                 events: [{
                   type:               'user.custom_tool_result',
@@ -140,6 +238,10 @@ export async function POST(request) {
               })
             }
           } else if (t === 'session.thread_created') {
+            // A new specialist just got spun up (e.g. the coordinator
+            // handed the spec to bi-design). Remember its name for later
+            // attribution, tell the UI which stage is now active, and open
+            // a dedicated narration stream for it (see above).
             threadAgentNames[event.session_thread_id] = event.agent_name
             const hint = SUBAGENT_HINTS[event.agent_name] ?? `${event.agent_name ?? 'subagent'} working…`
             send({ type: 'thinking', hint })
@@ -148,6 +250,9 @@ export async function POST(request) {
             const hint = SUBAGENT_HINTS[event.agent_name] ?? `${event.agent_name ?? 'subagent'} working…`
             send({ type: 'thinking', hint })
           } else if (t === 'span.model_request_end') {
+            // Every individual model call reports exactly how many tokens
+            // it used — this is the raw data the token/cost-tracking
+            // feature in the sidebar is built from (see lib/pricing.js).
             const u = event.model_usage
             if (u) send({ type: 'usage', input: u.input_tokens ?? 0, output: u.output_tokens ?? 0, cacheRead: u.cache_read_input_tokens ?? 0, cacheWrite: u.cache_creation_input_tokens ?? 0 })
           } else if (t === 'session.status_idle') {
@@ -169,6 +274,12 @@ export async function POST(request) {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
         send2({ type: 'error', message: msg })
       } finally {
+        // Cleanup: whether the turn finished normally or the browser
+        // disconnected mid-run, make sure every subagent narration stream we
+        // opened gets explicitly closed (abort) and fully wound down
+        // (awaited) before we close the outer SSE connection — otherwise
+        // those background listeners would leak, still running after
+        // nothing is left to read their output.
         for (const ctrl of Object.values(subagentControllers)) ctrl.abort()
         await Promise.allSettled(subagentTasks)
         controller.close()

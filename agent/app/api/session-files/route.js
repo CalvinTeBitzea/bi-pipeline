@@ -1,3 +1,24 @@
+// WHAT THIS FILE IS, IN BUSINESS TERMS
+// -------------------------------------
+// Powers the "Files" panel in the chat UI — the list of dashboard_spec.json,
+// semantic_model.json, wireframe.html etc. the agent team has produced for
+// THIS conversation, plus every earlier draft of each, so a user can see how
+// a file evolved across revision rounds (e.g. bi-authoring flags an issue,
+// bi-design fixes it and rewrites the file — this endpoint lets you see both
+// the before and the after).
+//
+// CONCEPT: There's no dedicated "list files" API — we reconstruct it
+// -------------------------------------------------------------------------
+// The Managed Agents platform doesn't expose a simple "show me the current
+// contents of the session's workspace" endpoint. What it DOES expose is the
+// full, ordered history of every event that happened in the session —
+// including every raw `write`/`edit` tool call the agents made. So this
+// route works like a forensic accountant: it replays that entire event log
+// from the beginning, in order, and manually re-derives "what does each file
+// look like right now" (and every version it passed through) purely from
+// the sequence of write/edit actions. This is the same idea as reconstructing
+// a document's final state by replaying its full edit history rather than
+// asking for "the current version" directly, which isn't offered here.
 import Anthropic from '@anthropic-ai/sdk'
 
 const DEFAULT_SESSION_ID = process.env.REFERENCE_SESSION_ID || 'sesn_01S3zW6pLxWnwyxZ9rmB6tZB'
@@ -13,6 +34,10 @@ export async function GET(request) {
 
   const events = []
   try {
+    // Pull the ENTIRE event history for this conversation — every message,
+    // every tool call, from the very start. For a long-running session this
+    // could be a lot of events, but it's the only way to answer "what files
+    // exist and what do they contain."
     for await (const event of client.beta.sessions.events.list(SESSION_ID, { betas: [BETA] })) {
       events.push(event)
     }
@@ -48,6 +73,8 @@ export async function GET(request) {
     if (path.includes('/.') || path.startsWith('/proc/') || path.startsWith('/sys/')) continue
 
     if (event.name === 'write' && input.content != null) {
+      // A `write` call replaces a file wholesale — treat it as a brand new
+      // version, keeping every prior version around rather than discarding it.
       if (!fileVersions[path]) {
         fileVersions[path] = { versions: [] }
       }
@@ -58,6 +85,11 @@ export async function GET(request) {
         versionNum: versions.length + 1,
       })
     } else if (event.name === 'edit') {
+      // An `edit` call is a find-and-replace against whatever the CURRENT
+      // latest version is — we have to actually perform that same
+      // find-and-replace ourselves here (`.replace`/`.split().join()`) to
+      // keep our reconstructed copy in sync with what really happened on
+      // the agent's side.
       const state = fileVersions[path]
       if (!state?.versions?.length) continue
       const latest = state.versions[state.versions.length - 1]

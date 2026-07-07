@@ -1,17 +1,45 @@
 """
-Fix Phase B memory read failure: run 2 proved bi-design/bi-authoring can't
-discover existing lesson files (no glob/grep tool -> can only guess filenames,
-guessed wrong, wrote a 3rd overlapping lesson instead of finding the other two).
+WHAT THIS SCRIPT IS, IN BUSINESS TERMS
+---------------------------------------
+This is a bug-fix script, kept here as a record of a real incident and how it
+was diagnosed and fixed. The story: after add_memory_instructions.py taught
+bi-design/bi-authoring to consult a shared "lessons learned" folder, a live
+test run showed they *still* repeated the same mistakes. Telling an employee
+"go check the shared drive for past mistakes" doesn't help if they don't
+have the equivalent of a file browser or search bar — they'd have to guess
+the exact filename, which they got wrong. This script gives them that
+"file browser + search" capability and rewrites the instruction to actually
+use it, rather than assuming they'll find things by luck.
 
-This script:
-  1. Gives both agents glob + grep (bi-authoring currently has NO explicit
-     agent_toolset block at all -- it relies on an undocumented implicit
-     baseline of read/write/edit, so its new block must include those too,
-     not just add glob/grep, or the update would silently narrow its tools).
-  2. Replaces the existing narrow "## Memory" section (scoped to "visual
-     types or DAX patterns") with instructions to glob-list then grep-search
-     for ANY relevant lesson, and (for bi-authoring) dedup before writing.
-  3. Verifies the resolved tool list via agents.retrieve after each update.
+CONCEPT: An AI agent can only do what its "tools" list allows
+----------------------------------------------------------------
+An agent's `tools` configuration isn't just documentation — it's a hard
+permission boundary enforced by the platform. Telling an agent in plain
+English "go search the folder" is meaningless if `glob` (list files matching
+a pattern) and `grep` (search file contents for a keyword) aren't in its
+tool list: it literally has no action available that does that, so at best
+it can guess a filename and try to `read` it directly. This is the same
+concept as a company system where an employee's badge doesn't open the
+records room — no amount of telling them "go check the file" helps until
+you also give them the key.
+
+Root cause found here: bi-design/bi-authoring could `read` a file if they
+already knew its exact name, but had no way to *discover* what files existed
+— so a vague instruction like "check /mnt/memory/... for relevant entries"
+led to guessing wrong filenames and missing real, existing lessons.
+
+CONCEPT: "Implicit" vs. explicit tool permissions (a subtle trap)
+----------------------------------------------------------------------
+bi-authoring, at the time of this fix, had never been given an explicit
+`agent_toolset` block — yet it clearly could already read and write files
+(it does that every run). That's because leaving the toolset block out
+entirely defaults to a platform-defined baseline of common tools, rather
+than "no tools." That's an easy trap: the moment you add ANY explicit
+toolset block to be specific about one tool (e.g. "I just want to add
+glob"), you replace that implicit baseline entirely — if you forget to also
+list read/write/edit explicitly, you'd silently take those away. This script
+calls that out and includes all five tools explicitly for exactly that
+reason (see AUTHORING_TOOLS below).
 
 Run once from agent/agent-configs/:
     python3 fix_memory_read.py
@@ -27,6 +55,10 @@ load_dotenv(HERE.parent / ".env.local")
 BI_DESIGN_ID    = "agent_01Auw9HmVhn71m97DEwPGkui"
 BI_AUTHORING_ID = "agent_014pXjcphcdvysd5PQKhyBBf"
 
+# Replacement "## Memory" instructions — the key change from the original
+# wording is spelling out the ACTUAL SEQUENCE OF TOOL CALLS to make ("use
+# glob to list, then grep to search, THEN read") instead of a vague "check
+# the folder" that leaves the agent to invent its own (worse) strategy.
 DESIGN_MEMORY = """
 
 ## Memory
@@ -62,9 +94,11 @@ anything already there. One file per distinct lesson, named for the
 pattern (e.g. missing-required-fields.md).
 """
 
+# bi-design's explicit toolset: write/edit/read (its normal job of producing
+# the two output files) plus the new glob/grep pair for memory search.
 DESIGN_TOOLS = {
     "type": "agent_toolset_20260401",
-    "default_config": {"enabled": False},
+    "default_config": {"enabled": False},  # "start from nothing, then opt in" — an allowlist, not a blocklist
     "configs": [
         {"name": "write", "enabled": True},
         {"name": "edit",  "enabled": True},
@@ -90,6 +124,16 @@ AUTHORING_TOOLS = {
     ],
 }
 
+# bi-authoring's other tool: a CUSTOM tool (not a built-in file-system
+# action). Custom tools are how you give an agent access to YOUR OWN
+# business logic rather than generic file operations — here, "run the real
+# validation gates and tell me pass/fail." The agent only sees this
+# description + schema; the actual validation code runs on our own server
+# (see agent/app/api/chat/route.js, which intercepts calls to this tool name
+# and forwards them to the deployed `builder` service). This is the same
+# "function calling" / "tool use" concept used across most AI agent
+# platforms: the model can't execute code itself, so it asks the surrounding
+# application to run a named function and hands back the result.
 VALIDATE_IR_TOOL = {
     "type": "custom",
     "name": "validate_ir",
@@ -110,6 +154,10 @@ VALIDATE_IR_TOOL = {
 
 
 def replace_memory_section(system: str, new_section: str) -> str:
+    """Cuts out everything from the OLD "## Memory" heading onward and
+    replaces it with the new section -- unlike add_memory_instructions.py's
+    simple append, this one assumes an older "## Memory" block already
+    exists and needs to be swapped out, not added to."""
     marker = "\n\n## Memory\n"
     idx = system.find(marker)
     base = system[:idx] if idx != -1 else system.rstrip()
@@ -128,6 +176,10 @@ def update(client, agent_id, new_tools, new_memory_section, label):
     print(f"  {label}: v{agent.version} -> v{updated.version}")
 
     # Verify the resolved tool list actually matches intent before trusting it.
+    # This "write, then immediately read back and check" habit matters a lot
+    # when working against a remote API you don't control: it catches
+    # mistakes (wrong tool name, unexpected defaults) before they cause a
+    # confusing failure three steps later in a live agent run.
     resolved = client.beta.agents.retrieve(agent_id)
     for t in resolved.tools:
         if getattr(t, "type", None) == "agent_toolset_20260401":

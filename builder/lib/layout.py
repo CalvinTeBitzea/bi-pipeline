@@ -1,10 +1,31 @@
 """
+WHAT THIS FILE IS, IN BUSINESS TERMS
+--------------------------------------
+This is the "furniture placement" engine — it turns the AI's simple,
+approximate description of where a chart should go ("row 2, spanning 8 of
+12 columns") into the EXACT pixel coordinates Power BI's file format
+actually requires. It's the same translation a floor planner does turning
+"a 3-seat sofa against the north wall" into precise x/y/width/height
+measurements a construction crew can build from.
+
 Deterministic snap engine.
 
 Turns each visual's coarse `grid` hint ({col,row,colSpan,rowSpan} on a 12-column
 canvas) into a resolved pixel `layout` ({x,y,w,h,z}) on the FHD (1920x1080) PBIR
 canvas. This is the single layout authority shared by the HTML wireframe and the
 PBIR builder, so the two never drift.
+
+CONCEPT: A 12-column grid system — why the AI never has to think in pixels
+-------------------------------------------------------------------------
+Asking an AI model to directly produce exact pixel coordinates for a dozen
+charts on a page is asking for trouble — small arithmetic slips compound
+into overlapping or off-canvas visuals. A "12-column grid" (the same idea
+professional web/print design tools use) lets the model instead reason in
+much coarser, much harder-to-get-wrong terms: "this chart takes half the
+row" (colSpan 6 of 12) rather than "this chart is exactly 906 pixels wide
+starting at x=942." This file is the ONE place that does the actual pixel
+math, deterministically, so it's always exactly consistent — never subject
+to an AI's arithmetic mistakes.
 
 `grid.row` selects a horizontal **band** the engine owns vertically:
   row 0 → filter bar (slicers, thin)   row 1 → KPI band (cards)
@@ -36,7 +57,16 @@ _Z_DEFAULT = 2000
 
 def snap_page(page: dict) -> tuple[dict, list[str]]:
     """Resolve `layout` for every visual in `page`. Mutates and returns the page
-    plus a list of issue strings (overlaps, out-of-bounds, >8 visuals)."""
+    plus a list of issue strings (overlaps, out-of-bounds, >8 visuals).
+
+    Overall recipe: figure out which vertical "bands" (row 0 = filters, row 1
+    = KPIs, row 2+ = charts) are actually used on this page, compute how tall
+    each one should be, then place every visual left-to-right/top-to-bottom
+    within its band based on its col/colSpan. Finally, run guard checks
+    (`_check_bounds`/`_check_overlap`) to catch a spec that's internally
+    inconsistent (e.g. too many visuals crammed into one row) BEFORE it
+    becomes a visually broken report.
+    """
     visuals = page.get("visuals", [])
     _ensure_grids(visuals)
 
@@ -73,6 +103,12 @@ def snap_page(page: dict) -> tuple[dict, list[str]]:
 
 
 # ── band sizing ────────────────────────────────────────────────────────────────
+# The filter bar and KPI band have FIXED heights (a slicer or KPI card
+# doesn't need to grow); every remaining "chart band" splits the leftover
+# vertical space evenly between however many chart rows actually exist on
+# the page — the same idea as a picture frame with two fixed-size mats and
+# the remaining space split evenly between however many photos you're
+# framing.
 
 def _band_heights(bands: list[int]) -> dict[int, float]:
     fixed = {}
@@ -96,6 +132,12 @@ def _band_offsets(bands: list[int], band_h: dict[int, float]) -> dict[int, float
 
 
 # ── grid synthesis (fallback when a visual has no grid) ─────────────────────────
+# If the AI's spec somehow omits grid placement for a visual (shouldn't
+# normally happen, but this keeps the pipeline resilient rather than
+# crashing), this gives it a REASONABLE default position based purely on its
+# TYPE — slicers go in the filter bar, cards in the KPI band, everything
+# else spreads two-per-row starting below those — rather than leaving it
+# unplaced.
 
 def _ensure_grids(visuals: list[dict]) -> None:
     if all("grid" in v for v in visuals):
@@ -123,6 +165,13 @@ def _ensure_grids(visuals: list[dict]) -> None:
 
 
 # ── z-order + tab order ─────────────────────────────────────────────────────────
+# "z-order" is which visual draws ON TOP when two overlap (higher number =
+# in front) — filters/slicers are kept behind cards, which are kept behind
+# charts, by convention, matching how the house design brief expects layers
+# to stack. "Tab order" is the sequence keyboard/screen-reader navigation
+# visits visuals in — assigned here top-to-bottom, left-to-right, which is
+# the natural reading order a sighted user would also scan the page in
+# (an accessibility consideration, not just a cosmetic one).
 
 def _assign_z_and_taborder(visuals: list[dict]) -> None:
     order = sorted(visuals, key=lambda v: (v["layout"]["y"], v["layout"]["x"]))
@@ -132,6 +181,11 @@ def _assign_z_and_taborder(visuals: list[dict]) -> None:
 
 
 # ── guards ──────────────────────────────────────────────────────────────────────
+# Sanity checks run AFTER placement: did anything end up off the edge of the
+# canvas, or on top of another visual? These don't PREVENT a build — they
+# surface as warnings the authoring/QA stage of the AI pipeline can act on —
+# but they're what catches "the spec asked for something that doesn't
+# actually fit" before a human ever opens the file and sees it visually.
 
 def _check_bounds(visuals: list[dict], eps: float = 1.0) -> list[str]:
     issues = []
@@ -156,6 +210,12 @@ def _check_overlap(visuals: list[dict], eps: float = 1.0) -> list[str]:
 
 
 if __name__ == "__main__":
+    # CONCEPT: a self-test you can run directly (`python layout.py`)
+    # Rather than needing the whole pipeline running, this block lets a
+    # developer sanity-check the layout engine in isolation against one
+    # hand-written example page — quick manual verification during
+    # development, separate from the formal automated tests in
+    # builder/tests/test_layout.py.
     # smoke: the worked-example page (8 visuals)
     import json
     page = {
