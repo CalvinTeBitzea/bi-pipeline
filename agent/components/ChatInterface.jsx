@@ -40,7 +40,11 @@ import SetupPanels from './SetupPanels'
 
 const AGENT_LABEL        = 'BI Wireframe Agent'
 const DEFAULT_SESSION_ID = process.env.NEXT_PUBLIC_REFERENCE_SESSION_ID || 'sesn_01S3zW6pLxWnwyxZ9rmB6tZB'
-const STORAGE_KEY        = 'bi_agent_sessions'
+// Only the "which conversation was this browser last looking at" pointer is
+// kept locally now — the conversation list itself, along with each one's
+// nickname/pinned status, is fetched from the server (see /api/sessions and
+// /api/session-update) so it's the same on every device, not just this one.
+const ACTIVE_ID_KEY      = 'bi_active_session_id'
 
 // CONCEPT: localStorage — this browser's own private notepad
 // -------------------------------------------------------------------------
@@ -51,18 +55,12 @@ const STORAGE_KEY        = 'bi_agent_sessions'
 // truth. That's why losing localStorage (a different browser, a cleared
 // cache) doesn't lose any real work — it just loses the friendly nicknames
 // and the "which one was I looking at" convenience.
-function loadStorage() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw)
-  } catch {}
-  return null
+function loadActiveId() {
+  try { return localStorage.getItem(ACTIVE_ID_KEY) } catch { return null }
 }
 
-function saveStorage(sessions, activeId) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ sessions, activeId }))
-  } catch {}
+function saveActiveId(id) {
+  try { localStorage.setItem(ACTIVE_ID_KEY, id) } catch {}
 }
 
 function fmtDate(iso) {
@@ -579,7 +577,11 @@ function SessionItem({
   const commit = () => {
     setEditing(false)
     const trimmed = editName.trim()
-    if (trimmed !== session.name) onRename(session.id, trimmed)
+    // Clearing the field back to blank is treated as "cancel," not "clear
+    // the name" — the underlying session API can't actually revert a title
+    // to unset once one's been given, so pretending it can would show a
+    // blank name locally that silently reappears after the next reload.
+    if (trimmed && trimmed !== session.name) onRename(session.id, trimmed)
   }
 
   useEffect(() => {
@@ -793,7 +795,10 @@ function ConversationHeader({ name, fallback, onRename }) {
   const commit = () => {
     setEditing(false)
     const trimmed = editName.trim()
-    if (trimmed !== name) onRename(trimmed)
+    // Same "clearing to blank cancels rather than clears" reasoning as
+    // SessionItem's commit() — the session API can't actually unset a
+    // title once one's been set.
+    if (trimmed && trimmed !== name) onRename(trimmed)
   }
 
   if (editing) return (
@@ -1164,25 +1169,42 @@ export default function ChatInterface() {
     setHistoryLoading(false)
   }, [])
 
-  // Bootstrap from localStorage on mount — "where was I last time I opened
-  // this app in this browser?" A brand new browser/profile has nothing
-  // saved, so it seeds one starter conversation (the shared reference
-  // session) rather than showing an empty, conversation-less sidebar.
-  useEffect(() => {
-    const stored = loadStorage()
-    if (stored?.sessions?.length && stored.activeId) {
-      setSessions(stored.sessions)
-      setActiveSessionId(stored.activeId)
-      activeSessionIdRef.current = stored.activeId
-      fetchHistory(stored.activeId)
-    } else {
-      // Seed localStorage with the default session
-      const seed = [{ id: DEFAULT_SESSION_ID, createdAt: new Date().toISOString(), name: '', pinned: false }]
-      setSessions(seed)
-      saveStorage(seed, DEFAULT_SESSION_ID)
-      fetchHistory(DEFAULT_SESSION_ID)
+  // Fetch the shared, server-side conversation list (see /api/sessions) —
+  // this is what every device sees the same way, replacing what used to be
+  // a per-browser localStorage list.
+  const fetchSessions = useCallback(async () => {
+    try {
+      const data = await fetch('/api/sessions').then(r => r.json())
+      return data.sessions ?? []
+    } catch {
+      return []
     }
-  }, [fetchHistory])
+  }, [])
+
+  // Bootstrap on mount — "what conversations exist in this project, and
+  // which one was THIS browser last looking at?" The conversation list
+  // itself comes from the server (so it's identical on every device); only
+  // "which one to open first" is a per-device convenience read from
+  // localStorage, and falls back to the most recent conversation (rather
+  // than the original reference session) if this browser has no memory of
+  // its own — so a new device opening the app lands on the same latest
+  // conversation another device would see, not an empty/ancient default.
+  useEffect(() => {
+    (async () => {
+      const list = await fetchSessions()
+      setSessions(list)
+
+      const remembered = loadActiveId()
+      const initial = (remembered && list.some(s => s.id === remembered))
+        ? remembered
+        : (list[0]?.id ?? DEFAULT_SESSION_ID)
+
+      setActiveSessionId(initial)
+      activeSessionIdRef.current = initial
+      saveActiveId(initial)
+      fetchHistory(initial)
+    })()
+  }, [fetchHistory, fetchSessions])
 
   // Change which conversation is "active" — clears the message list (so old
   // messages don't flash briefly before the new conversation's history
@@ -1193,11 +1215,7 @@ export default function ChatInterface() {
     setMessages([])
     setLastTurnUsage(null)
     setInput('')
-    setSessions(prev => {
-      const updated = prev
-      saveStorage(updated, sid)
-      return updated
-    })
+    saveActiveId(sid)
     fetchHistory(sid)
   }, [fetchHistory])
 
@@ -1217,12 +1235,13 @@ export default function ChatInterface() {
       const data = await res.json()
       if (!data.sessionId) throw new Error('No session ID returned')
 
+      // The new session already exists server-side the instant /api/session/new
+      // returns (so /api/sessions would already include it too) — prepending
+      // it here directly just avoids an extra round-trip/flicker before it
+      // shows up in the sidebar.
       const newEntry = { id: data.sessionId, createdAt: data.createdAt ?? new Date().toISOString(), name: '', pinned: false }
-      setSessions(prev => {
-        const updated = [newEntry, ...prev]
-        saveStorage(updated, data.sessionId)
-        return updated
-      })
+      setSessions(prev => [newEntry, ...prev])
+      saveActiveId(data.sessionId)
       // Sync the ref synchronously (not just the state setter) so an
       // immediately-following dispatchToAgent call targets the new session
       // rather than a stale value from before this render commits.
@@ -1249,21 +1268,31 @@ export default function ChatInterface() {
 
   const toggleDark = useCallback(() => setDarkMode(d => !d), [])
 
+  // Renaming/pinning update the local list immediately (so the UI feels
+  // instant) and persist to the session's own title/metadata on the server
+  // (see /api/session-update) so the change is visible from any other
+  // device the next time it loads /api/sessions — not just this browser.
   const renameSession = useCallback((id, name) => {
-    setSessions(prev => {
-      const updated = prev.map(s => s.id === id ? { ...s, name } : s)
-      saveStorage(updated, activeSessionIdRef.current)
-      return updated
-    })
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, name } : s))
+    fetch('/api/session-update', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ sessionId: id, name }),
+    }).catch(() => {})
   }, [])
 
   const pinSession = useCallback((id) => {
-    setSessions(prev => {
-      const updated = prev.map(s => s.id === id ? { ...s, pinned: !s.pinned } : s)
-      saveStorage(updated, activeSessionIdRef.current)
-      return updated
-    })
-  }, [])
+    // Read the current value from state directly (rather than computing it
+    // inside the setSessions updater) to avoid relying on that updater
+    // running exactly once — React may invoke it more than once in dev.
+    const nextPinned = !sessions.find(s => s.id === id)?.pinned
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, pinned: nextPinned } : s))
+    fetch('/api/session-update', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ sessionId: id, pinned: nextPinned }),
+    }).catch(() => {})
+  }, [sessions])
 
   const fetchSessionFiles = useCallback(async () => {
     setFetching(true)
@@ -1273,18 +1302,20 @@ export default function ChatInterface() {
       const files = data.files ?? []
       setSessionFiles(files)
       setFetched(true)
-      // Persist readiness status on the session so all sidebar items can show it
+      // Persist readiness status on the session (server-side, via
+      // /api/session-update) so every device's sidebar can show the same
+      // readiness dot for this conversation, not just this browser's.
       const hasSpec  = files.some(f => f.name === 'dashboard_spec.json')
       const hasModel = files.some(f => f.name === 'semantic_model.json')
-      setSessions(prev => {
-        const updated = prev.map(s =>
-          s.id === activeSessionIdRef.current
-            ? { ...s, fileStatus: { hasSpec, hasModel } }
-            : s
-        )
-        saveStorage(updated, activeSessionIdRef.current)
-        return updated
-      })
+      const fileStatus = { hasSpec, hasModel }
+      setSessions(prev => prev.map(s =>
+        s.id === activeSessionIdRef.current ? { ...s, fileStatus } : s
+      ))
+      fetch('/api/session-update', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ sessionId: activeSessionIdRef.current, fileStatus }),
+      }).catch(() => {})
     } catch {}
     setFetching(false)
   }, [])
