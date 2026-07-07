@@ -95,12 +95,6 @@ export async function POST(request) {
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-  // Send the user message to the Managed Agent session
-  await client.beta.sessions.events.send(SESSION_ID, {
-    events: [{ type: 'user.message', content: [{ type: 'text', text: message }] }],
-    betas: [BETA],
-  })
-
   const encoder = new TextEncoder()
 
   const readable = new ReadableStream({
@@ -111,6 +105,26 @@ export async function POST(request) {
       // built-in EventSource/fetch-stream reader knows to split on it.
       const send = (data) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
+
+      // Sending the user message lives INSIDE this try block (not before the
+      // stream is created) on purpose: a session can refuse a new message —
+      // e.g. if a previous turn got killed mid-flight by this route's own
+      // maxDuration limit and the session hasn't settled back to a state
+      // that accepts new input yet. If that throw happened before the
+      // stream existed, the client would get a bare, non-SSE error response
+      // that the frontend's SSE reader has no way to interpret — it would
+      // just look like the agent hung forever "thinking". Handling it here
+      // means a rejected send surfaces as a real, visible error instead.
+      try {
+        await client.beta.sessions.events.send(SESSION_ID, {
+          events: [{ type: 'user.message', content: [{ type: 'text', text: message }] }],
+          betas: [BETA],
+        })
+      } catch (err) {
+        send({ type: 'error', message: err?.message ?? String(err) })
+        controller.close()
+        return
+      }
 
       // session_thread_id -> agent_name, populated as subagent threads spin up,
       // so cross-posted events (which carry a thread id but not the agent

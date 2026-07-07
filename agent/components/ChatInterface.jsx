@@ -1437,6 +1437,18 @@ export default function ChatInterface() {
       const reader  = res.body.getReader()
       const decoder = new TextDecoder()
       let buf = ''
+      // CONCEPT: A stream can end WITHOUT ever sending a 'done'/'error'
+      // -----------------------------------------------------------------
+      // The server-side connection can be cut off abruptly — most
+      // concretely, if a turn runs long enough to hit the server's own
+      // maxDuration limit (see app/api/chat/route.js), the hosting platform
+      // kills that request mid-stream with no chance for it to send a
+      // final message first. `reader.read()` still reports `done: true`
+      // when that happens (the connection just closed), so the loop below
+      // would otherwise exit silently, leaving the UI frozen forever on
+      // "thinking" with a permanently blank streaming bubble — exactly the
+      // stuck state this flag exists to catch and recover from.
+      let reachedTerminal = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -1498,6 +1510,7 @@ export default function ChatInterface() {
             turnNarrationAccum.current = []
             setLiveNarration([])
             setAgentStatus('idle')
+            reachedTerminal = true
           } else if (data.type === 'error') {
             setMessages((prev) =>
               prev.map((m) =>
@@ -1509,8 +1522,27 @@ export default function ChatInterface() {
             turnNarrationAccum.current = []
             setLiveNarration([])
             setAgentStatus('idle')
+            reachedTerminal = true
           }
         }
+      }
+
+      // The connection closed without ever telling us the turn finished or
+      // failed — most likely the server's own time limit killed it mid-run
+      // (see the CONCEPT note above). Surface that plainly and release the
+      // UI back to idle, rather than leaving it stuck "thinking" forever
+      // with no way to send another message.
+      if (!reachedTerminal) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === agentId
+              ? { ...m, text: '[Connection ended before the run finished — it may have exceeded the server time limit. Try again, or send a follow-up.]', streaming: false, error: true }
+              : m
+          )
+        )
+        turnNarrationAccum.current = []
+        setLiveNarration([])
+        setAgentStatus('idle')
       }
     } catch (err) {
       setMessages((prev) =>
