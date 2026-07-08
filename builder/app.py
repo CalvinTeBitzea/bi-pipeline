@@ -62,7 +62,7 @@ from flask import Flask, jsonify, request, send_file
 import agents.ingest as ingest_agent
 import agents.pbip_builder as pbip_agent
 from lib.artifact_store import artifact_path
-from lib.tmdl_measures import measure_blocks_by_table
+from lib.tmdl_measures import MEASURES_TABLE_NAME, MODEL_REF_LINE, build_measures_table_tmdl, measure_blocks_by_table
 
 app = Flask(__name__)
 
@@ -126,34 +126,38 @@ def build():
             # A README travels WITH the zip itself, rather than relying on a
             # chat message or a server log line the user may never see — the
             # zip is the one artifact guaranteed to actually reach them, so
-            # this is the most reliable place to explain the one manual step
-            # this pipeline can't safely do for them (see lib/tmdl_measures.py
-            # for why measures are pasted in rather than written directly:
-            # this pipeline never touches the user's existing SemanticModel
-            # project, which already has their real data connections).
+            # this is the most reliable place to explain the two manual
+            # steps this pipeline can't safely do for the user (see
+            # lib/tmdl_measures.py for why every measure goes into ONE new
+            # `_Measures` table rather than being merged into existing data
+            # tables: this pipeline never edits the user's existing
+            # SemanticModel tables directly, since they already have real
+            # data connections — a brand new, dedicated table is the one
+            # thing that's always safe to just add).
             if tmdl_fragments:
                 readme_lines = [
                     "This report's pages/visuals are ready to use as-is — copy",
                     "everything under pages/ into <YourReport>.Report/definition/pages/.",
                     "",
-                    "IMPORTANT — one manual step remains: the visuals in this report",
-                    "reference measures (KPIs like \"Net Revenue\", \"High-Severity Rate\", etc.)",
-                    "that don't exist in your semantic model yet. This pipeline never edits",
-                    "your existing .SemanticModel project directly, since it already has your",
-                    "real data connections — instead, the real DAX for every measure is",
-                    "included below as ready-to-paste TMDL fragments:",
+                    f"IMPORTANT — two manual steps remain to make this report's measures",
+                    f"(KPIs like \"Net Revenue\", \"High-Severity Rate\", etc.) actually work —",
+                    f"they're referenced by every visual that needs them, but a report's",
+                    f"pages can't define the measures themselves; those live in the",
+                    f"SemanticModel project instead:",
                     "",
-                ]
-                for fname, _ in tmdl_fragments:
-                    table = fname.removeprefix("measures_").removesuffix(".tmdl")
-                    readme_lines.append(
-                        f"  - tmdl/{fname}  ->  paste its measure block(s) into the existing "
-                        f"`table '{table}'` definition in "
-                        f"<YourReport>.SemanticModel/definition/tables/{table}.tmdl"
-                    )
-                readme_lines += [
+                    f"1. Create a NEW file at",
+                    f"     <YourReport>.SemanticModel/definition/tables/{MEASURES_TABLE_NAME}.tmdl",
+                    f"   with the exact contents of tmdl/{MEASURES_TABLE_NAME}.tmdl from this zip.",
+                    f"   (This is a brand new, dedicated table for measures only — the standard",
+                    f"   Power BI convention — so it's always safe to add, never touches your",
+                    f"   real data tables.)",
                     "",
-                    "Until you do this, the visuals will show as blank/errored in Desktop —",
+                    f"2. Open <YourReport>.SemanticModel/definition/model.tmdl and add this",
+                    f"   one line immediately before the existing `ref cultureInfo ...` line:",
+                    f"     {MODEL_REF_LINE}",
+                    f"   (Without this, Power BI Desktop won't know the new table exists.)",
+                    "",
+                    "Until you do both, the visuals will show as blank/errored in Desktop —",
                     "the report structure is correct, it's just missing the measure",
                     "definitions those visuals point to.",
                 ]
@@ -190,14 +194,24 @@ def build_manifest():
     """The direct-write counterpart to /api/build.
 
     Same underlying ingest+build pipeline, same real files — but returned as
-    a JSON manifest {pages, measuresByTable} instead of a zip, so the
-    browser can write them straight into a user-connected local folder via
-    the File System Access API (see agent/lib/localWrite.js) rather than
-    making the user download-and-manually-copy. `measuresByTable` is
-    per-MEASURE (name + individually rendered block), not one opaque
-    per-table blob like the zip path's tmdl_fragments — that's what lets the
-    browser merge new measures into an existing table file one at a time,
-    skipping any that are already there instead of duplicating on a rebuild.
+    a JSON manifest {pages, measuresTable, modelRefLine} instead of a zip,
+    so the browser can write them straight into a user-connected local
+    folder via the File System Access API (see agent/lib/localWrite.js)
+    rather than making the user download-and-manually-copy.
+
+    `measuresTable` carries BOTH shapes the client might need, since which
+    one applies depends on whether `_Measures.tmdl` already exists locally
+    (from an earlier build) or not — a decision only the client can make,
+    since only it can see the user's actual folder:
+      - `createContent`: the full, ready-to-write file, used the FIRST time
+        (the table doesn't exist yet).
+      - `measures`: the same measures individually rendered (name + block),
+        used on a REBUILD to merge into the existing file one measure at a
+        time, skipping any whose name is already there rather than
+        duplicating it.
+    `modelRefLine` is the one line the client needs to ensure exists in
+    model.tmdl for Desktop to actually load the new table — see
+    lib/tmdl_measures.py's MODEL_REF_LINE for exactly why.
 
     This is a genuinely separate, weaker guarantee than /api/build's zip:
     it hands the browser individual file CONTENTS and trusts it to write
@@ -227,9 +241,17 @@ def build_manifest():
 
         shutil.rmtree(pages_dir.parent.parent.parent, ignore_errors=True)
 
+        measures = model.get("measures", [])
+        measures_table = {
+            "name": MEASURES_TABLE_NAME,
+            "createContent": build_measures_table_tmdl(measures) if measures else None,
+            "measures": measure_blocks_by_table(measures).get(MEASURES_TABLE_NAME, []),
+        }
+
         return _cors(jsonify({
             "pages": pages,
-            "measuresByTable": measure_blocks_by_table(model.get("measures", [])),
+            "measuresTable": measures_table,
+            "modelRefLine": MODEL_REF_LINE,
             "gate1": result["gate1"],
             "gate3": result["gate3"],
         }))

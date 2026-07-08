@@ -174,17 +174,24 @@ async function mergePagesJson(pagesDirHandle, newContent) {
   await writeFileAtPath(pagesDirHandle, 'pages.json', JSON.stringify(merged, null, 2))
 }
 
-// Merges new measure blocks into an EXISTING table's .tmdl file. Assumes
-// the standard PBIP per-object layout (one table's whole definition lives
-// in its own file, ending at EOF) — appending at the very end is therefore
-// syntactically safe: nothing else in that file follows the table's closing
-// content. Skips (rather than duplicates) any measure whose name is already
-// present, so rebuilding the same report repeatedly is safe to re-run.
-async function mergeMeasuresIntoTable(tablesDirHandle, table, measures) {
-  const fileName = `${table}.tmdl`
+// Writes the dedicated `_Measures` table — CREATING it fresh (using the
+// full, ready-made TMDL content from the manifest) the first time, or
+// MERGING into it on a rebuild if it already exists. Assumes the standard
+// PBIP per-object layout (one table's whole definition lives in its own
+// file, ending at EOF) — appending at the very end is therefore
+// syntactically safe on a merge: nothing else in that file follows the
+// table's closing content. On merge, skips (rather than duplicates) any
+// measure whose name is already present, so rebuilding the same report
+// repeatedly is safe to re-run.
+async function writeMeasuresTable(tablesDirHandle, measuresTable) {
+  const { name, createContent, measures } = measuresTable
+  const fileName = `${name}.tmdl`
   const existingText = await readFileIfExists(tablesDirHandle, fileName)
+
   if (existingText == null) {
-    return { table, added: [], skipped: [], notFound: true }
+    if (!createContent) return { created: false, added: [], skipped: [] }
+    await writeFileAtPath(tablesDirHandle, fileName, createContent)
+    return { created: true, added: measures.map(m => m.name), skipped: [] }
   }
 
   const added = []
@@ -207,7 +214,37 @@ async function mergeMeasuresIntoTable(tablesDirHandle, table, measures) {
     const newText = existingText.replace(/\n*$/, '\n') + appended
     await writeFileAtPath(tablesDirHandle, fileName, newText)
   }
-  return { table, added, skipped, notFound: false }
+  return { created: false, added, skipped }
+}
+
+// Ensures `refLine` (e.g. "ref table _Measures") exists in the
+// SemanticModel's top-level model.tmdl — a .tmdl file on disk in
+// definition/tables/ isn't enough on its own; Desktop only loads tables
+// listed in this index. Idempotent (checks the line isn't already present
+// before adding it, so rebuilding never adds a duplicate ref), and inserts
+// immediately before the `ref cultureInfo` line to match the exact
+// convention Microsoft's own skill template uses for this same pattern —
+// falling back to appending at EOF if that anchor line isn't found for some
+// reason, which still produces a valid model.tmdl.
+async function ensureModelRef(modelDefinitionDir, refLine) {
+  const existingText = await readFileIfExists(modelDefinitionDir, 'model.tmdl')
+  if (existingText == null) {
+    return { added: false, error: 'model.tmdl not found — could not register the new table' }
+  }
+  if (existingText.includes(refLine)) {
+    return { added: false, error: null }
+  }
+
+  const lines = existingText.split('\n')
+  const anchorIdx = lines.findIndex(l => l.trim().startsWith('ref cultureInfo'))
+  if (anchorIdx === -1) {
+    const newText = existingText.replace(/\n*$/, '\n') + `\n${refLine}\n`
+    await writeFileAtPath(modelDefinitionDir, 'model.tmdl', newText)
+  } else {
+    lines.splice(anchorIdx, 0, refLine, '')
+    await writeFileAtPath(modelDefinitionDir, 'model.tmdl', lines.join('\n'))
+  }
+  return { added: true, error: null }
 }
 
 // The top-level entry point ChatInterface.jsx calls: given a connected
@@ -238,19 +275,18 @@ export async function applyManifest(rootHandle, manifest) {
     pagesWritten++
   }
 
-  const tableResults = []
-  const measuresByTable = manifest.measuresByTable ?? {}
-  if (Object.keys(measuresByTable).length > 0) {
+  let measuresTableResult = null
+  let modelRefResult = null
+  const measuresTable = manifest.measuresTable
+  if (measuresTable && (measuresTable.measures?.length || measuresTable.createContent)) {
     if (!modelDir) {
-      for (const [table, measures] of Object.entries(measuresByTable)) {
-        tableResults.push({ table, added: [], skipped: [], notFound: true, measures })
-      }
+      measuresTableResult = { created: false, added: [], skipped: [], notFound: true }
     } else {
       const modelDefinitionDir = await modelDir.handle.getDirectoryHandle('definition', { create: true })
       const tablesDirHandle = await modelDefinitionDir.getDirectoryHandle('tables', { create: true })
-      for (const [table, measures] of Object.entries(measuresByTable)) {
-        const result = await mergeMeasuresIntoTable(tablesDirHandle, table, measures)
-        tableResults.push(result)
+      measuresTableResult = await writeMeasuresTable(tablesDirHandle, measuresTable)
+      if (manifest.modelRefLine) {
+        modelRefResult = await ensureModelRef(modelDefinitionDir, manifest.modelRefLine)
       }
     }
   }
@@ -259,6 +295,8 @@ export async function applyManifest(rootHandle, manifest) {
     reportFolderName: reportDir.name,
     modelFolderName: modelDir?.name ?? null,
     pagesWritten,
-    tableResults,
+    measuresTableName: measuresTable?.name ?? null,
+    measuresTableResult,
+    modelRefResult,
   }
 }

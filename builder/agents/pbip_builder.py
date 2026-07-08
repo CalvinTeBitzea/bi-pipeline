@@ -933,17 +933,17 @@ def run(build_id: str, pbip_report_path: str | None = None) -> dict:
     # but the measure's actual DAX formula never reached the user in any
     # form — opening the built report in Desktop would show visuals wired
     # to fields that don't exist yet in the connected model. See
-    # lib/tmdl_measures.py for why these are fragments to paste into each
-    # table's existing .tmdl file, not a replacement for it.
+    # lib/tmdl_measures.py for why every measure goes into ONE new,
+    # dedicated `_Measures` table rather than scattered across whichever
+    # real data table each is conceptually about.
     for fname, tmdl_text in tmdl_measures.measures_tmdl_by_table(model.get("measures", [])):
         if not any(n == fname for n, _ in tmdl_fragments):
             tmdl_fragments.append((fname, tmdl_text))
     if model.get("measures"):
         skill_warnings.append(
-            f"{len(model['measures'])} measure(s) from semantic_model.json included as "
-            f"TMDL fragments in the zip's tmdl/ folder — paste each measure block into "
-            f"the matching table's existing .tmdl file in "
-            f"<YourReport>.SemanticModel/definition/tables/ before reopening in Desktop.")
+            f"{len(model['measures'])} measure(s) from semantic_model.json included as a new "
+            f"{tmdl_measures.MEASURES_TABLE_NAME}.tmdl table in the zip's tmdl/ folder — see "
+            f"README.txt for the two steps needed to add it to your model.")
 
     # House theme registration (no-op with a warning in scaffold mode — see
     # contracts/HOUSE_DESIGN_BRIEF.md § Registration)

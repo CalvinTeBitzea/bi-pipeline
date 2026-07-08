@@ -789,13 +789,21 @@ function SessionItem({
                 {applyResult && (
                   <div className="mt-1.5 font-mono text-[9px] text-ink/80 leading-snug">
                     <p>✓ Wrote {applyResult.pagesWritten} page file(s) to {applyResult.reportFolderName}</p>
-                    {applyResult.tableResults.map(t => (
-                      <p key={t.table}>
-                        {t.notFound
-                          ? `⚠ ${t.table}.tmdl not found — paste its measures manually (see Download zip)`
-                          : `${t.table}: +${t.added.length} measure(s)${t.skipped.length ? `, ${t.skipped.length} already present` : ''}`}
+                    {applyResult.measuresTableResult && (
+                      <p>
+                        {applyResult.measuresTableResult.notFound
+                          ? `⚠ ${applyResult.modelFolderName ? '' : 'No .SemanticModel folder found — '}couldn't add ${applyResult.measuresTableName} (see Download zip to add it by hand)`
+                          : applyResult.measuresTableResult.created
+                          ? `✓ Created ${applyResult.measuresTableName} with ${applyResult.measuresTableResult.added.length} measure(s)`
+                          : `${applyResult.measuresTableName}: +${applyResult.measuresTableResult.added.length} measure(s)${applyResult.measuresTableResult.skipped.length ? `, ${applyResult.measuresTableResult.skipped.length} already present` : ''}`}
                       </p>
-                    ))}
+                    )}
+                    {applyResult.modelRefResult?.error && (
+                      <p>⚠ {applyResult.modelRefResult.error}</p>
+                    )}
+                    {applyResult.modelRefResult?.added && (
+                      <p>✓ Registered {applyResult.measuresTableName} in model.tmdl</p>
+                    )}
                   </div>
                 )}
                 {applyError && (

@@ -10,27 +10,65 @@
 # the built report in Power BI Desktop would see visuals correctly wired up
 # to fields that don't actually exist yet in the connected data model.
 #
-# This module is the fix: it turns semantic_model.json's measures into real
-# TMDL `measure` blocks, grouped by which table they belong to, so they can
-# be pasted directly into the matching table's .tmdl file in the user's
-# existing .SemanticModel project — either by hand (the zip/README path,
+# This module is the fix: it turns semantic_model.json's measures into a
+# real TMDL table, either by hand (the zip/README path,
 # `measures_tmdl_by_table`) or automatically (the direct-write path in
-# builder/app.py's /api/build-manifest, which uses the finer-grained
-# `measure_blocks_by_table` so the browser can merge and de-duplicate one
-# measure at a time rather than one all-or-nothing file at a time).
+# builder/app.py's /api/build-manifest and agent/lib/localWrite.js).
 #
-# CONCEPT: A "fragment," not a full model file — merge, don't replace
+# CONCEPT: A single, dedicated "measures table" — not scattered per-table
 # -------------------------------------------------------------------------
-# The user's SemanticModel project already exists, with real data-source
-# connections, columns, and partitions Power BI Desktop generated when they
-# first connected it — none of that is something this pipeline has any
-# business overwriting. So this deliberately produces MEASURE-ONLY
-# fragments (matching the exact style already used by this pipeline's own
-# skill templates — see pbi-skills/time-window-highlight/templates/
-# measures-window-additions.tmdl for a hand-authored example of the same
-# shape) meant to be pasted INSIDE an existing `table '<Name>' { ... }`
-# block, not a replacement for the whole table file.
+# An earlier version of this file put each measure into ITS OWN data
+# table's .tmdl file (e.g. a "Net Revenue" measure filed under the real
+# Fact_Sales table it's about). That's technically valid, but it's not how
+# most real-world Power BI models are organized in practice — measures get
+# scattered across whichever table each is conceptually "about," making
+# them hard to find as a model grows. The standard, widely-recommended
+# convention instead is ONE dedicated, disconnected table (commonly named
+# `_Measures`) that holds EVERY measure regardless of what it's about,
+# purely so the Fields list has one obvious place to look. This is exactly
+# the pattern Microsoft's own skill template already uses for a similar
+# purpose — see pbi-skills/line-column-combo-chart/templates/measures-
+# table.tmdl and its SKILL.md, whose own worked example literally names the
+# table `_Measures` (with a leading underscore, both to make it sort to the
+# top of the Fields list and as a naming convention signaling "not a data
+# table"). This module follows that same convention for ALL of a report's
+# measures, not just a skill's own helper ones.
+#
+# CONCEPT: Why a measure's "home table" doesn't matter functionally
+# -------------------------------------------------------------------------
+# It's safe to move every measure into one shared table because a DAX
+# measure's "home table" is purely organizational, not a scoping rule:
+# every column reference in the generated DAX is already fully qualified
+# (`'RealTable'[Column]`, never a bare `[Column]`), and measure-to-measure
+# references (`[Other Measure]`) resolve by name globally across the whole
+# model regardless of which table either measure is filed under. Nothing
+# about the DAX itself changes — only where Power BI Desktop's Fields list
+# shows it.
+#
+# CONCEPT: Why a "measures table" needs a dummy column at all
+# -------------------------------------------------------------------------
+# A TMDL/Power BI table can't exist with ONLY measures and nothing else —
+# it needs to be a structurally real table. The fix (again matching
+# Microsoft's own template) is a single placeholder column backed by a
+# trivial calculated partition (`Row("Column", BLANK())` — a one-row,
+# one-column table with a blank value) that's never meant to be seen or
+# used; it exists purely so the table is valid, with the real measures
+# riding alongside it.
 import uuid
+
+# The one dedicated table every report's measures always go into. Matches
+# Microsoft's own skill template's example value exactly (see SKILL.md's
+# Token Table: `<MEASURE_TABLE>` -> `_Measures`).
+MEASURES_TABLE_NAME = "_Measures"
+
+# The exact line that has to exist in the SemanticModel's top-level
+# model.tmdl for Power BI Desktop to actually load this table — a TMDL
+# table file on disk isn't enough by itself; every table also needs a
+# `ref table <Name>` entry in the model's own index. Unquoted, matching the
+# real resolved example in the skill's worked-example.md (quoting is only
+# required in TMDL when a name contains spaces or symbols; `_Measures` needs
+# none).
+MODEL_REF_LINE = f"ref table {MEASURES_TABLE_NAME}"
 
 
 def _measure_lines(name: str, dax: str) -> list[str]:
@@ -78,45 +116,64 @@ def _measure_block(m: dict) -> str:
 
 
 def measure_blocks_by_table(measures: list[dict]) -> dict[str, list[dict]]:
-    """Group semantic_model.json's measures by `home_table`, with each
-    measure rendered individually. Returns {table: [{"name": ..., "block":
-    "..."}]} — the per-measure granularity the direct-write path needs to
-    merge and de-duplicate one measure at a time (see
-    builder/app.py's /api/build-manifest and agent/lib/localWrite.js),
-    rather than having to treat a whole table's measures as one
-    indivisible, all-or-nothing chunk of text."""
-    by_table: dict[str, list[dict]] = {}
-    for m in measures:
-        by_table.setdefault(m["home_table"], []).append(m)
+    """Every measure, individually rendered, all filed under the one
+    MEASURES_TABLE_NAME — regardless of semantic_model.json's own
+    `home_table` for each (see the CONCEPT note above for why that's safe).
+    Returns {MEASURES_TABLE_NAME: [{"name":..., "block":...}, ...]}, kept as
+    a dict (rather than just a list) so the direct-write path can merge and
+    de-duplicate one measure at a time against whatever's already in an
+    existing `_Measures.tmdl` from an earlier build — see
+    agent/lib/localWrite.js."""
     return {
-        table: [{"name": m["name"], "block": _measure_block(m)} for m in table_measures]
-        for table, table_measures in sorted(by_table.items())
+        MEASURES_TABLE_NAME: [
+            {"name": m["name"], "block": _measure_block(m)} for m in measures
+        ]
     }
 
 
-def measures_tmdl_by_table(measures: list[dict]) -> list[tuple[str, str]]:
-    """Group semantic_model.json's measures by `home_table` and render each
-    group as one TMDL fragment FILE (for the zip/README download path,
-    where a user pastes one whole file's contents by hand). Returns
-    [(filename, tmdl_text), ...], one entry per table that has at least one
-    measure — matching the same (filename, content) shape pbip_builder.py
-    already collects skill-shipped TMDL fragments in, so both flow through
-    the exact same downstream path (result["tmdl_fragments"] ->
-    builder/app.py's zip `tmdl/` folder).
-    """
-    by_table = measure_blocks_by_table(measures)
+def build_measures_table_tmdl(measures: list[dict]) -> str:
+    """Full TMDL for a BRAND NEW `_Measures` table: the table declaration,
+    every measure's block, and the minimal placeholder column + calculated
+    partition every TMDL table structurally needs (see the CONCEPT note
+    above) — matches Microsoft's own skill template
+    (pbi-skills/line-column-combo-chart/templates/measures-table.tmdl)
+    field for field, just with every one of THIS report's real measures
+    instead of that template's two example ones."""
+    lines = [
+        f"table '{MEASURES_TABLE_NAME}'",
+        f"\tlineageTag: {uuid.uuid4()}",
+        "",
+    ]
+    for m in measures:
+        lines.append(_measure_block(m))
+        lines.append("")
+    lines += [
+        "\tcolumn Column",
+        "\t\tformatString: 0",
+        f"\t\tlineageTag: {uuid.uuid4()}",
+        "\t\tsummarizeBy: sum",
+        "\t\tisNameInferred",
+        "\t\tsourceColumn: [Column]",
+        "",
+        "\t\tannotation SummarizationSetBy = Automatic",
+        "",
+        f"\tpartition '{MEASURES_TABLE_NAME}' = calculated",
+        "\t\tmode: import",
+        '\t\tsource = Row("Column", BLANK())',
+        "",
+        f"\tannotation PBI_Id = {uuid.uuid4().hex}",
+        "",
+        f"\tannotation {uuid.uuid4()} = {{\"Expression\":\"\"}}",
+    ]
+    return "\n".join(lines)
 
-    fragments: list[tuple[str, str]] = []
-    for table, blocks in by_table.items():
-        lines = [
-            f"// Measures for table '{table}', generated from semantic_model.json.",
-            f"// Paste these {len(blocks)} measure block(s) inside the existing",
-            f"// `table '{table}'` definition in your .SemanticModel project",
-            f"// (definition/tables/{table}.tmdl) — do not replace the whole file.",
-            "",
-        ]
-        for b in blocks:
-            lines.append(b["block"])
-            lines.append("")
-        fragments.append((f"measures_{table}.tmdl", "\n".join(lines)))
-    return fragments
+
+def measures_tmdl_by_table(measures: list[dict]) -> list[tuple[str, str]]:
+    """(zip/README download path) Returns the ONE new table file's full,
+    ready-to-drop-in content — [(filename, tmdl_text)] shaped to match
+    pbip_builder.py's existing tmdl_fragments handling, but with exactly one
+    entry rather than one per real data table. Empty list if there are no
+    measures at all."""
+    if not measures:
+        return []
+    return [(f"{MEASURES_TABLE_NAME}.tmdl", build_measures_table_tmdl(measures))]
