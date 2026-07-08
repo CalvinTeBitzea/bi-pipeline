@@ -62,6 +62,7 @@ from flask import Flask, jsonify, request, send_file
 import agents.ingest as ingest_agent
 import agents.pbip_builder as pbip_agent
 from lib.artifact_store import artifact_path
+from lib.tmdl_measures import measure_blocks_by_table
 
 app = Flask(__name__)
 
@@ -173,6 +174,65 @@ def build():
         )
         return _cors(response)
 
+    except Exception as exc:
+        response = jsonify({"error": str(exc)})
+        response.status_code = 500
+        return _cors(response)
+
+
+@app.route("/api/build-manifest", methods=["OPTIONS"])
+def build_manifest_preflight():
+    return _cors(app.response_class("", 200))
+
+
+@app.route("/api/build-manifest", methods=["POST"])
+def build_manifest():
+    """The direct-write counterpart to /api/build.
+
+    Same underlying ingest+build pipeline, same real files — but returned as
+    a JSON manifest {pages, measuresByTable} instead of a zip, so the
+    browser can write them straight into a user-connected local folder via
+    the File System Access API (see agent/lib/localWrite.js) rather than
+    making the user download-and-manually-copy. `measuresByTable` is
+    per-MEASURE (name + individually rendered block), not one opaque
+    per-table blob like the zip path's tmdl_fragments — that's what lets the
+    browser merge new measures into an existing table file one at a time,
+    skipping any that are already there instead of duplicating on a rebuild.
+
+    This is a genuinely separate, weaker guarantee than /api/build's zip:
+    it hands the browser individual file CONTENTS and trusts it to write
+    them to the right place inside a folder the user explicitly granted
+    access to — it never touches anything on this server's or the user's
+    disk outside of that request/response.
+    """
+    try:
+        body     = request.get_json(force=True)
+        spec     = body["dashboard_spec"]
+        model    = body["semantic_model"]
+        build_id = body.get("build_id") or uuid.uuid4().hex[:8]
+
+        ingest_agent.run(build_id, spec, model)
+        result = pbip_agent.run(build_id)
+
+        pages_dir = artifact_path(build_id, "report.pbir") / "definition" / "pages"
+
+        pages = []
+        for f in sorted(pages_dir.rglob("*")):
+            if f.is_file():
+                rel = f.relative_to(pages_dir)
+                pages.append({
+                    "path": f"definition/pages/{rel.as_posix()}",
+                    "content": f.read_text(),
+                })
+
+        shutil.rmtree(pages_dir.parent.parent.parent, ignore_errors=True)
+
+        return _cors(jsonify({
+            "pages": pages,
+            "measuresByTable": measure_blocks_by_table(model.get("measures", [])),
+            "gate1": result["gate1"],
+            "gate3": result["gate3"],
+        }))
     except Exception as exc:
         response = jsonify({"error": str(exc)})
         response.status_code = 500

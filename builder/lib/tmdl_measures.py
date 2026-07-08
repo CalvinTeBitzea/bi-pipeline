@@ -13,7 +13,11 @@
 # This module is the fix: it turns semantic_model.json's measures into real
 # TMDL `measure` blocks, grouped by which table they belong to, so they can
 # be pasted directly into the matching table's .tmdl file in the user's
-# existing .SemanticModel project.
+# existing .SemanticModel project — either by hand (the zip/README path,
+# `measures_tmdl_by_table`) or automatically (the direct-write path in
+# builder/app.py's /api/build-manifest, which uses the finer-grained
+# `measure_blocks_by_table` so the browser can merge and de-duplicate one
+# measure at a time rather than one all-or-nothing file at a time).
 #
 # CONCEPT: A "fragment," not a full model file — merge, don't replace
 # -------------------------------------------------------------------------
@@ -55,38 +59,64 @@ def _measure_lines(name: str, dax: str) -> list[str]:
     return lines
 
 
-def measures_tmdl_by_table(measures: list[dict]) -> list[tuple[str, str]]:
-    """Group semantic_model.json's measures by `home_table` and render each
-    group as one TMDL fragment. Returns [(filename, tmdl_text), ...], one
-    entry per table that has at least one measure — matching the same
-    (filename, content) shape pbip_builder.py already collects skill-shipped
-    TMDL fragments in, so both flow through the exact same downstream path
-    (result["tmdl_fragments"] -> builder/app.py's zip `tmdl/` folder).
-    """
+def _measure_block(m: dict) -> str:
+    """Render ONE measure's complete TMDL block (description + declaration +
+    properties), as a single string with no trailing blank line — callers
+    decide their own spacing between measures."""
+    lines: list[str] = []
+    # TMDL's own convention for a human-readable description: a `///`
+    # doc-comment line directly above the object it describes — has to come
+    # BEFORE the `measure` line itself, not mixed in with its indented
+    # properties.
+    if m.get("description"):
+        lines.append(f"\t/// {m['description']}")
+    lines += _measure_lines(m["name"], m["dax"])
+    if m.get("format_string"):
+        lines.append(f"\t\tformatString: {m['format_string']}")
+    lines.append(f"\t\tlineageTag: {uuid.uuid4()}")
+    return "\n".join(lines)
+
+
+def measure_blocks_by_table(measures: list[dict]) -> dict[str, list[dict]]:
+    """Group semantic_model.json's measures by `home_table`, with each
+    measure rendered individually. Returns {table: [{"name": ..., "block":
+    "..."}]} — the per-measure granularity the direct-write path needs to
+    merge and de-duplicate one measure at a time (see
+    builder/app.py's /api/build-manifest and agent/lib/localWrite.js),
+    rather than having to treat a whole table's measures as one
+    indivisible, all-or-nothing chunk of text."""
     by_table: dict[str, list[dict]] = {}
     for m in measures:
         by_table.setdefault(m["home_table"], []).append(m)
+    return {
+        table: [{"name": m["name"], "block": _measure_block(m)} for m in table_measures]
+        for table, table_measures in sorted(by_table.items())
+    }
+
+
+def measures_tmdl_by_table(measures: list[dict]) -> list[tuple[str, str]]:
+    """Group semantic_model.json's measures by `home_table` and render each
+    group as one TMDL fragment FILE (for the zip/README download path,
+    where a user pastes one whole file's contents by hand). Returns
+    [(filename, tmdl_text), ...], one entry per table that has at least one
+    measure — matching the same (filename, content) shape pbip_builder.py
+    already collects skill-shipped TMDL fragments in, so both flow through
+    the exact same downstream path (result["tmdl_fragments"] ->
+    builder/app.py's zip `tmdl/` folder).
+    """
+    by_table = measure_blocks_by_table(measures)
 
     fragments: list[tuple[str, str]] = []
-    for table, table_measures in sorted(by_table.items()):
+    for table, blocks in by_table.items():
         lines = [
             f"// Measures for table '{table}', generated from semantic_model.json.",
-            f"// Paste these {len(table_measures)} measure block(s) inside the existing",
+            f"// Paste these {len(blocks)} measure block(s) inside the existing",
             f"// `table '{table}'` definition in your .SemanticModel project",
             f"// (definition/tables/{table}.tmdl) — do not replace the whole file.",
             "",
         ]
-        for m in table_measures:
-            # TMDL's own convention for a human-readable description: a
-            # `///` doc-comment line directly above the object it describes
-            # — has to come BEFORE the `measure` line itself, not mixed in
-            # with its indented properties.
-            if m.get("description"):
-                lines.append(f"\t/// {m['description']}")
-            lines += _measure_lines(m["name"], m["dax"])
-            if m.get("format_string"):
-                lines.append(f"\t\tformatString: {m['format_string']}")
-            lines.append(f"\t\tlineageTag: {uuid.uuid4()}")
+        for b in blocks:
+            lines.append(b["block"])
             lines.append("")
         fragments.append((f"measures_{table}.tmdl", "\n".join(lines)))
     return fragments

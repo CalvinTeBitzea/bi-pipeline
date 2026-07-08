@@ -37,6 +37,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { gsap } from 'gsap'
 import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin, Link, RotateCcw, Trash2 } from 'lucide-react'
 import SetupPanels from './SetupPanels'
+import * as localWrite from '../lib/localWrite'
 
 const AGENT_LABEL        = 'BI Wireframe Agent'
 const DEFAULT_SESSION_ID = process.env.NEXT_PUBLIC_REFERENCE_SESSION_ID || 'sesn_01S3zW6pLxWnwyxZ9rmB6tZB'
@@ -563,6 +564,7 @@ function SessionItem({
   sessionFiles = [], fetching = false, fetched = false, onFetchFiles,
   onPreviewFile, previewFileName, buildingPbip, onBuildPbip, pbipError,
   onRegenerateFiles, isIdle = true, selectMode = false, selected = false, onToggleSelect,
+  reportFolderReady = false, onApplyToFolder, applyingToFolder = false, applyResult = null, applyError = null,
 }) {
   const [editing, setEditing]   = useState(false)
   const [editName, setEditName] = useState('')
@@ -756,19 +758,51 @@ function SessionItem({
               {/* Archived older versions — collapsible */}
               <ArchiveSection files={sessionFiles} onPreviewFile={onPreviewFile} />
 
-              {/* Build PBIP — always shown when files are loaded, disabled until spec is ready */}
+              {/* Build PBIP — always shown when files are loaded, disabled until spec is ready.
+                  With a report folder connected, this becomes the PRIMARY
+                  "apply directly" action, with a "Download zip instead"
+                  fallback still available underneath it — the manual path
+                  never goes away, it just steps back to secondary billing. */}
               <div className="mt-1.5">
                 <button
-                  onClick={canBuild ? onBuildPbip : undefined}
-                  disabled={!canBuild || buildingPbip}
+                  onClick={canBuild ? (reportFolderReady ? onApplyToFolder : onBuildPbip) : undefined}
+                  disabled={!canBuild || buildingPbip || applyingToFolder}
                   className={`w-full font-mono text-[10px] tracking-wider uppercase px-2 py-2 rounded transition-colors ${
                     canBuild
                       ? 'bg-red text-paper hover:bg-red/80 disabled:opacity-30'
                       : 'bg-ink/8 text-muted cursor-default'
                   }`}
                 >
-                  {buildingPbip ? 'Building…' : 'Build PBIP ↓'}
+                  {reportFolderReady
+                    ? (applyingToFolder ? 'Applying…' : 'Apply to report folder ↓')
+                    : (buildingPbip ? 'Building…' : 'Build PBIP ↓')}
                 </button>
+                {canBuild && reportFolderReady && (
+                  <button
+                    onClick={onBuildPbip}
+                    disabled={buildingPbip || applyingToFolder}
+                    className="w-full mt-1 font-mono text-[9px] tracking-wider uppercase text-muted hover:text-ink transition-colors disabled:opacity-30"
+                  >
+                    {buildingPbip ? 'Building…' : 'Download zip instead'}
+                  </button>
+                )}
+                {applyResult && (
+                  <div className="mt-1.5 font-mono text-[9px] text-ink/80 leading-snug">
+                    <p>✓ Wrote {applyResult.pagesWritten} page file(s) to {applyResult.reportFolderName}</p>
+                    {applyResult.tableResults.map(t => (
+                      <p key={t.table}>
+                        {t.notFound
+                          ? `⚠ ${t.table}.tmdl not found — paste its measures manually (see Download zip)`
+                          : `${t.table}: +${t.added.length} measure(s)${t.skipped.length ? `, ${t.skipped.length} already present` : ''}`}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {applyError && (
+                  <p className="font-mono text-[10px] text-red/80 mt-1.5 leading-snug" title={applyError}>
+                    {applyError}
+                  </p>
+                )}
                 {!canBuild && (
                   <div className="mt-1.5">
                     <p className="font-mono text-[9px] text-muted leading-snug mb-1.5">{buildHint}</p>
@@ -867,7 +901,7 @@ function fmtCost(n) { return n == null ? '—' : `$${n < 0.01 ? n.toFixed(4) : n
 // This is the "control room" of the app — everything here is either
 // navigation (switch/rename/pin conversations) or observability (how much
 // is this costing, what files exist) rather than the conversation itself.
-function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onLinkSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, onRenameSession, onPinSession, onDeleteSessions }) {
+function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onLinkSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, onRenameSession, onPinSession, onDeleteSessions, reportFolderSupported, reportFolderName, reportFolderReady, onConnectFolder, onReconnectFolder, onDisconnectFolder, onApplyToFolder, applyingToFolder, applyResult, applyError }) {
   const ref = useRef(null)
   // Batch-select state lives here (not in the parent) — it's pure sidebar UI
   // state, nothing outside this component needs to know which rows are
@@ -1010,6 +1044,55 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
         </div>
       </div>
 
+      {/* Report folder connect — entirely absent in browsers that don't
+          support the File System Access API (Safari, Firefox) rather than
+          showing a control that would just fail; the zip download in each
+          conversation's Build PBIP section works everywhere regardless. */}
+      {reportFolderSupported && (
+        <div className="flex-shrink-0 px-4 py-2.5 border-b border-ink/10">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-mono text-[9px] tracking-[0.15em] uppercase text-ink/40">Report folder</span>
+            {reportFolderName ? (
+              <div className="flex items-center gap-1.5">
+                <span className={`font-mono text-[10px] ${reportFolderReady ? 'text-ink' : 'text-muted'}`}>
+                  {reportFolderName}
+                </span>
+                {!reportFolderReady && (
+                  <button
+                    onClick={onReconnectFolder}
+                    title="Re-grant permission"
+                    className="font-mono text-[9px] uppercase text-red hover:text-red/70 transition-colors"
+                  >
+                    Reconnect
+                  </button>
+                )}
+                <button
+                  onClick={onDisconnectFolder}
+                  title="Disconnect"
+                  className="text-muted hover:text-red transition-colors"
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={onConnectFolder}
+                className="font-mono text-[9px] tracking-wider uppercase text-muted hover:text-red transition-colors"
+              >
+                Connect →
+              </button>
+            )}
+          </div>
+          {reportFolderName && (
+            <p className="font-mono text-[9px] text-muted/70 mt-1 leading-snug">
+              {reportFolderReady
+                ? 'Build PBIP will write pages + merge measures here directly.'
+                : 'Permission needed again — click Reconnect to resume writing here.'}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Conversations header — a "Select" toggle switches the list into
           batch-select mode (checkboxes on every row, click-to-check instead
           of click-to-switch); once at least one row is checked, "New" is
@@ -1097,6 +1180,11 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
                     selectMode={selectMode}
                     selected={selectedIds.has(s.id)}
                     onToggleSelect={toggleSelected}
+                    reportFolderReady={reportFolderReady}
+                    onApplyToFolder={onApplyToFolder}
+                    applyingToFolder={s.id === activeSessionId ? applyingToFolder : false}
+                    applyResult={s.id === activeSessionId ? applyResult : null}
+                    applyError={s.id === activeSessionId ? applyError : null}
                   />
                 ))}
               </ul>
@@ -1225,9 +1313,37 @@ export default function ChatInterface() {
   const [fetched, setFetched]               = useState(false)
   const [buildingPbip, setBuildingPbip]     = useState(false)
   const [pbipError, setPbipError]           = useState(null)
-  const [darkMode, setDarkMode]             = useState(() => {
-    try { return localStorage.getItem('bi_dark') === '1' } catch { return false }
-  })
+  // "Connect a local report folder" feature state — see lib/localWrite.js
+  // for the actual File System Access API mechanics. `reportFolderName` is
+  // non-null once ANY folder has ever been picked (even if permission has
+  // since lapsed); `reportFolderReady` additionally requires that
+  // permission is currently granted — the UI uses the gap between those two
+  // to show a "Reconnect" prompt instead of silently failing.
+  // Starts false unconditionally, same reasoning as darkMode below: this is
+  // feature-detected via `window`, which doesn't exist during server
+  // rendering — computing it inline in JSX would render differently on the
+  // server (always unsupported) vs. the client (whatever the real browser
+  // supports), which is a direct, textbook hydration mismatch. Set for real
+  // in a mount-only useEffect instead, which never participates in the
+  // server/client comparison.
+  const [reportFolderSupported, setReportFolderSupported] = useState(false)
+  const [reportFolderHandle, setReportFolderHandle] = useState(null)
+  const [reportFolderName, setReportFolderName]     = useState(null)
+  const [reportFolderReady, setReportFolderReady]   = useState(false)
+  const [applyingToFolder, setApplyingToFolder]     = useState(false)
+  const [applyResult, setApplyResult]               = useState(null)
+  const [applyError, setApplyError]                 = useState(null)
+  // Starts false unconditionally (matching what the server, which has no
+  // localStorage, always renders) rather than reading localStorage in the
+  // initializer — that earlier version caused a real hydration mismatch for
+  // any returning user who'd previously turned dark mode on: the server's
+  // HTML always assumed light, but the client's first render would already
+  // see the saved '1' and render dark, and React would flag the mismatch on
+  // every single page load. Corrected from localStorage in a useEffect
+  // below instead, which only ever runs after hydration — the honest
+  // trade-off is a brief flash of light mode before it corrects, which is
+  // the standard, accepted fix for this exact class of SSR/localStorage bug.
+  const [darkMode, setDarkMode]             = useState(false)
   const [liveNarration, setLiveNarration] = useState([])
 
   const bottomRef    = useRef(null)
@@ -1358,6 +1474,14 @@ export default function ChatInterface() {
 
   const createNewSession = useCallback(() => createSessionAndSwitch(), [createSessionAndSwitch])
 
+  // Runs once, after hydration — safe to read localStorage here since this
+  // never executes server-side, so there's nothing for it to mismatch against.
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('bi_dark') === '1') setDarkMode(true)
+    } catch {}
+  }, [])
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode)
     try { localStorage.setItem('bi_dark', darkMode ? '1' : '0') } catch {}
@@ -1483,11 +1607,102 @@ export default function ChatInterface() {
     setBuildingPbip(false)
   }, [sessionFiles])
 
+  // On mount, try to resume a previously-connected report folder (see
+  // lib/localWrite.js) — `queryPermission` (unlike `requestPermission`)
+  // doesn't need a user gesture, so this can safely run automatically and
+  // just tell us whether the user will need to click "Reconnect" or not.
+  useEffect(() => {
+    const supported = localWrite.isSupported()
+    setReportFolderSupported(supported)
+    if (!supported) return
+    localWrite.loadSavedHandle().then(async (handle) => {
+      if (!handle) return
+      setReportFolderHandle(handle)
+      setReportFolderName(handle.name)
+      const granted = (await handle.queryPermission({ mode: 'readwrite' })) === 'granted'
+      setReportFolderReady(granted)
+    })
+  }, [])
+
+  const connectReportFolder = useCallback(async () => {
+    try {
+      const handle = await localWrite.pickReportFolder()
+      setReportFolderHandle(handle)
+      setReportFolderName(handle.name)
+      setReportFolderReady(true)
+      setApplyResult(null)
+      setApplyError(null)
+    } catch (e) {
+      // AbortError just means the user closed the picker without choosing
+      // anything — not a real error worth surfacing.
+      if (e?.name !== 'AbortError') setApplyError(e.message ?? String(e))
+    }
+  }, [])
+
+  const reconnectReportFolder = useCallback(async () => {
+    if (!reportFolderHandle) return
+    try {
+      const ok = await localWrite.ensurePermission(reportFolderHandle)
+      setReportFolderReady(ok)
+    } catch (e) {
+      setApplyError(e.message ?? String(e))
+    }
+  }, [reportFolderHandle])
+
+  const disconnectReportFolder = useCallback(() => {
+    localWrite.clearSavedHandle()
+    setReportFolderHandle(null)
+    setReportFolderName(null)
+    setReportFolderReady(false)
+    setApplyResult(null)
+    setApplyError(null)
+  }, [])
+
+  // The direct-write counterpart to buildPbip: same two IR files, but
+  // instead of downloading a zip, fetches a JSON manifest (see builder/
+  // app.py's /api/build-manifest) and writes/merges it straight into the
+  // connected local folder via lib/localWrite.js.
+  const applyToFolder = useCallback(async () => {
+    const specFile  = sessionFiles.find(f => f.name === 'dashboard_spec.json')
+    const modelFile = sessionFiles.find(f => f.name === 'semantic_model.json')
+    if (!specFile || !modelFile || !reportFolderHandle) return
+    setApplyingToFolder(true)
+    setApplyError(null)
+    setApplyResult(null)
+    try {
+      const res = await fetch(
+        (process.env.NEXT_PUBLIC_BICOHOST_URL ?? '') + '/api/build-manifest',
+        {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dashboard_spec: JSON.parse(specFile.content),
+            semantic_model: JSON.parse(modelFile.content),
+            build_id: Date.now().toString(36),
+          }),
+        }
+      )
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error ?? `HTTP ${res.status}`)
+      }
+      const manifest = await res.json()
+      const result = await localWrite.applyManifest(reportFolderHandle, manifest)
+      setApplyResult(result)
+    } catch (e) {
+      const msg = (e.message ?? '').split('\n')[0].slice(0, 200)
+      setApplyError(msg || 'Apply failed')
+    }
+    setApplyingToFolder(false)
+  }, [sessionFiles, reportFolderHandle])
+
   // Reset file state on session switch
   useEffect(() => {
     setSessionFiles([])
     setFetched(false)
     setPbipError(null)
+    setApplyResult(null)
+    setApplyError(null)
   }, [activeSessionId])
 
   // Auto-fetch files when agent goes idle after a conversation
@@ -1793,6 +2008,16 @@ export default function ChatInterface() {
         onToggleDark={toggleDark}
         onRenameSession={renameSession}
         onPinSession={pinSession}
+        reportFolderSupported={reportFolderSupported}
+        reportFolderName={reportFolderName}
+        reportFolderReady={reportFolderReady}
+        onConnectFolder={connectReportFolder}
+        onReconnectFolder={reconnectReportFolder}
+        onDisconnectFolder={disconnectReportFolder}
+        onApplyToFolder={applyToFolder}
+        applyingToFolder={applyingToFolder}
+        applyResult={applyResult}
+        applyError={applyError}
       />
 
       {/* ── MAIN ─────────────────────────────────────────────────────── */}
