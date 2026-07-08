@@ -76,6 +76,7 @@ from lib.anthropic_client import BRAIN, call_with_tool, consult_advisor
 from lib.artifact_store import read_artifact, write_artifact, artifact_path, mark_stage_done
 from lib import skills as skill_lib
 from lib import layout as layout_engine
+from lib import tmdl_measures
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -924,6 +925,25 @@ def run(build_id: str, pbip_report_path: str | None = None) -> dict:
 
     # Update pages.json
     _update_pages_json(pages_dir, new_page_names)
+
+    # Real measure definitions (name, real DAX, format) for EVERY measure in
+    # semantic_model.json — not just the couple of skill-specific helper
+    # measures collected above. Until this existed, visuals correctly
+    # REFERENCED measures by name (via measure_defs/_measure_projection)
+    # but the measure's actual DAX formula never reached the user in any
+    # form — opening the built report in Desktop would show visuals wired
+    # to fields that don't exist yet in the connected model. See
+    # lib/tmdl_measures.py for why these are fragments to paste into each
+    # table's existing .tmdl file, not a replacement for it.
+    for fname, tmdl_text in tmdl_measures.measures_tmdl_by_table(model.get("measures", [])):
+        if not any(n == fname for n, _ in tmdl_fragments):
+            tmdl_fragments.append((fname, tmdl_text))
+    if model.get("measures"):
+        skill_warnings.append(
+            f"{len(model['measures'])} measure(s) from semantic_model.json included as "
+            f"TMDL fragments in the zip's tmdl/ folder — paste each measure block into "
+            f"the matching table's existing .tmdl file in "
+            f"<YourReport>.SemanticModel/definition/tables/ before reopening in Desktop.")
 
     # House theme registration (no-op with a warning in scaffold mode — see
     # contracts/HOUSE_DESIGN_BRIEF.md § Registration)

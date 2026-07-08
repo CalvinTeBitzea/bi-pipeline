@@ -118,8 +118,45 @@ def build():
                 if f.is_file():
                     zf.write(f, f.relative_to(pages_dir))
             # tmdl/ content → copy each file to .SemanticModel/definition/tables/
-            for fname, tmdl_text in result.get("tmdl_fragments", []):
+            tmdl_fragments = result.get("tmdl_fragments", [])
+            for fname, tmdl_text in tmdl_fragments:
                 zf.writestr(f"tmdl/{fname}", tmdl_text)
+
+            # A README travels WITH the zip itself, rather than relying on a
+            # chat message or a server log line the user may never see — the
+            # zip is the one artifact guaranteed to actually reach them, so
+            # this is the most reliable place to explain the one manual step
+            # this pipeline can't safely do for them (see lib/tmdl_measures.py
+            # for why measures are pasted in rather than written directly:
+            # this pipeline never touches the user's existing SemanticModel
+            # project, which already has their real data connections).
+            if tmdl_fragments:
+                readme_lines = [
+                    "This report's pages/visuals are ready to use as-is — copy",
+                    "everything under pages/ into <YourReport>.Report/definition/pages/.",
+                    "",
+                    "IMPORTANT — one manual step remains: the visuals in this report",
+                    "reference measures (KPIs like \"Net Revenue\", \"High-Severity Rate\", etc.)",
+                    "that don't exist in your semantic model yet. This pipeline never edits",
+                    "your existing .SemanticModel project directly, since it already has your",
+                    "real data connections — instead, the real DAX for every measure is",
+                    "included below as ready-to-paste TMDL fragments:",
+                    "",
+                ]
+                for fname, _ in tmdl_fragments:
+                    table = fname.removeprefix("measures_").removesuffix(".tmdl")
+                    readme_lines.append(
+                        f"  - tmdl/{fname}  ->  paste its measure block(s) into the existing "
+                        f"`table '{table}'` definition in "
+                        f"<YourReport>.SemanticModel/definition/tables/{table}.tmdl"
+                    )
+                readme_lines += [
+                    "",
+                    "Until you do this, the visuals will show as blank/errored in Desktop —",
+                    "the report structure is correct, it's just missing the measure",
+                    "definitions those visuals point to.",
+                ]
+                zf.writestr("README.txt", "\n".join(readme_lines))
         zip_bytes = buf.getvalue()
 
         # Clean up the temporary build artifacts on this server now that
