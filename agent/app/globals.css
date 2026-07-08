@@ -4,6 +4,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme colors ────────────────────────────────────────────────────────── */
+/* Space-separated R G B numbers (not hex, not comma-separated) — required by
+   Tailwind's `rgb(var(--x) / <alpha-value>)` pattern in tailwind.config.js,
+   which is what lets `bg-ink/10`-style opacity modifiers keep working. The
+   `.dark` block redefines the SAME variable names to a dark palette; nothing
+   else in the app needs to know dark mode exists — every `bg-paper`,
+   `text-ink`, `border-ink/10`, etc. class already in use just follows
+   automatically once the `dark` class is present on <html>. */
+:root {
+  --c-paper:    232 228 221; /* #E8E4DD */
+  --c-offwhite: 245 243 238; /* #F5F3EE */
+  --c-ink:      17 17 17;    /* #111111 */
+  --c-red:      230 59 46;   /* #E63B2E */
+  --c-muted:    136 136 136; /* #888888 */
+  --c-surface:  218 214 206; /* #DAD6CE */
+}
+
+.dark {
+  --c-paper:    24 23 21;    /* #181715 — warm dark charcoal, replaces the light "paper" background */
+  --c-offwhite: 32 31 28;    /* #201F1C — sidebar/secondary background */
+  --c-ink:      237 234 227; /* #EDEAE3 — near-white warm text, inverse of light-mode "ink" */
+  --c-red:      235 91 76;   /* #EB5B4C — brightened slightly for contrast against a dark background */
+  --c-muted:    156 152 143; /* #9C988F — warm gray, lightened for dark-background legibility */
+  --c-surface:  42 41 37;    /* #2A2925 — card/header surface, one step lighter than the page background */
+}
+
 /* ── Noise overlay ───────────────────────────────────────────────────────── */
 body::after {
   content: '';
@@ -30,8 +56,13 @@ html,
 body {
   height: 100%;
   overflow: hidden;
-  background-color: #E8E4DD;
-  color: #111111;
+  /* These were hardcoded hex values before — meaning even with the CSS
+     variables above in place, the page's own base background/text would
+     have stayed frozen in light mode regardless of the `dark` class. Using
+     the same variables here is what makes the toggle affect the whole page,
+     not just individually-styled elements. */
+  background-color: rgb(var(--c-paper));
+  color: rgb(var(--c-ink));
   -webkit-font-smoothing: antialiased;
 }
 

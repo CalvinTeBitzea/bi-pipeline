@@ -41,6 +41,25 @@ export async function GET(request) {
     for await (const event of client.beta.sessions.events.list(SESSION_ID, { betas: [BETA] })) {
       events.push(event)
     }
+
+    // CRITICAL: the primary event list above only ever contains the
+    // COORDINATOR's own tool calls — and the coordinator itself almost
+    // never writes files directly, it delegates that to bi-design (see
+    // agent/app/api/chat/route.js's note on this same distinction). The
+    // actual `write` calls for dashboard_spec.json/semantic_model.json
+    // happen on bi-design's own subagent thread, which is invisible unless
+    // fetched separately — without this, every conversation created after
+    // the coordinator+subagent split would silently show zero files, no
+    // matter what the agents actually produced.
+    for await (const t of client.beta.sessions.threads.list(SESSION_ID, { betas: [BETA] })) {
+      // `threads.list()` includes the coordinator's own top-level thread
+      // (parent_thread_id === null) — skip it here since its events were
+      // already pulled in above; only SUBAGENT threads are missing.
+      if (t.parent_thread_id === null) continue
+      for await (const e of client.beta.sessions.threads.events.list(t.id, { session_id: SESSION_ID, betas: [BETA] })) {
+        if (e.type === 'agent.tool_use') events.push(e)
+      }
+    }
   } catch (err) {
     return Response.json({ error: err.message, files: [] }, { status: 500 })
   }

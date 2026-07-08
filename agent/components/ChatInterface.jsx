@@ -35,7 +35,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { gsap } from 'gsap'
-import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin, Link, RotateCcw } from 'lucide-react'
+import { ArrowUp, Download, Paperclip, Plus, Eye, X, Moon, Sun, Pencil, Pin, Link, RotateCcw, Trash2 } from 'lucide-react'
 import SetupPanels from './SetupPanels'
 
 const AGENT_LABEL        = 'BI Wireframe Agent'
@@ -559,10 +559,10 @@ function sessionFallbackName(sessions, id) {
 // correct task regular code does more reliably than an AI model free-styling
 // file contents from scratch.
 function SessionItem({
-  session, fallbackName, isActive, onSwitch, onRename, onPin,
+  session, fallbackName, isActive, onSwitch, onRename, onPin, onDelete,
   sessionFiles = [], fetching = false, fetched = false, onFetchFiles,
   onPreviewFile, previewFileName, buildingPbip, onBuildPbip, pbipError,
-  onRegenerateFiles, isIdle = true,
+  onRegenerateFiles, isIdle = true, selectMode = false, selected = false, onToggleSelect,
 }) {
   const [editing, setEditing]   = useState(false)
   const [editName, setEditName] = useState('')
@@ -609,6 +609,18 @@ function SessionItem({
       <div className={`group flex items-center gap-1 px-2 py-2 rounded-md transition-colors ${
         isActive ? 'bg-ink/8' : 'hover:bg-ink/5'
       }`}>
+        {selectMode && !editing && (
+          // Batch-select checkbox — only shown once "Select" mode is turned
+          // on in the sidebar header. Clicking a row in this mode toggles
+          // its checkbox instead of switching to that conversation.
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggleSelect(session.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="flex-shrink-0 w-3.5 h-3.5 accent-red cursor-pointer"
+          />
+        )}
         {editing ? (
           <input
             ref={inputRef}
@@ -621,7 +633,10 @@ function SessionItem({
             className="flex-1 min-w-0 font-mono text-[13px] bg-transparent border-b border-ink/30 outline-none text-ink placeholder:text-muted/40 py-0"
           />
         ) : (
-          <button onClick={() => onSwitch(session.id)} className="flex-1 min-w-0 text-left">
+          <button
+            onClick={() => selectMode ? onToggleSelect(session.id) : onSwitch(session.id)}
+            className="flex-1 min-w-0 text-left"
+          >
             <p className={`font-mono text-[13px] leading-snug truncate ${isActive ? 'text-ink' : 'text-ink/60'}`}>
               {isActive && <span className="text-red mr-1">●</span>}
               {session.pinned && !isActive && <span className="text-muted/60 mr-1">⊙</span>}
@@ -639,7 +654,7 @@ function SessionItem({
             </p>
           </button>
         )}
-        {!editing && (
+        {!editing && !selectMode && (
           <div className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
             <button onClick={startEdit} title="Rename" className="p-0.5 text-muted hover:text-ink transition-colors">
               <Pencil size={11} />
@@ -650,6 +665,13 @@ function SessionItem({
               className={`p-0.5 transition-colors ${session.pinned ? 'text-red hover:text-red/60' : 'text-muted hover:text-red'}`}
             >
               <Pin size={11} />
+            </button>
+            <button
+              onClick={() => onDelete(session.id)}
+              title="Delete conversation"
+              className="p-0.5 text-muted hover:text-red transition-colors"
+            >
+              <Trash2 size={11} />
             </button>
           </div>
         )}
@@ -845,8 +867,40 @@ function fmtCost(n) { return n == null ? '—' : `$${n < 0.01 ? n.toFixed(4) : n
 // This is the "control room" of the app — everything here is either
 // navigation (switch/rename/pin conversations) or observability (how much
 // is this costing, what files exist) rather than the conversation itself.
-function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onLinkSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, onRenameSession, onPinSession }) {
+function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessionId, sessions, onSwitchSession, onNewSession, creatingSession, onLinkSession, onPreviewFile, previewFileName, sessionFiles, onFetchFiles, fetching, fetched, buildingPbip, onBuildPbip, pbipError, onRegenerateFiles, darkMode, onToggleDark, onRenameSession, onPinSession, onDeleteSessions }) {
   const ref = useRef(null)
+  // Batch-select state lives here (not in the parent) — it's pure sidebar UI
+  // state, nothing outside this component needs to know which rows are
+  // currently checked.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+
+  const toggleSelectMode = useCallback(() => {
+    setSelectMode(v => !v)
+    setSelectedIds(new Set())
+  }, [])
+
+  const toggleSelected = useCallback((id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }, [])
+
+  const deleteOne = useCallback((id) => {
+    if (!window.confirm('Delete this conversation? This permanently removes it — it cannot be undone.')) return
+    onDeleteSessions([id])
+  }, [onDeleteSessions])
+
+  const deleteSelected = useCallback(() => {
+    const ids = [...selectedIds]
+    if (!ids.length) return
+    if (!window.confirm(`Delete ${ids.length} conversation${ids.length === 1 ? '' : 's'}? This permanently removes them — it cannot be undone.`)) return
+    onDeleteSessions(ids)
+    setSelectedIds(new Set())
+    setSelectMode(false)
+  }, [selectedIds, onDeleteSessions])
   const [sessionUsage, setSessionUsage]   = useState(null)
   const [runCost, setRunCost]             = useState(null)
   const [usageFetched, setUsageFetched]   = useState(false)
@@ -956,18 +1010,57 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
         </div>
       </div>
 
-      {/* Conversations header */}
+      {/* Conversations header — a "Select" toggle switches the list into
+          batch-select mode (checkboxes on every row, click-to-check instead
+          of click-to-switch); once at least one row is checked, "New" is
+          replaced by a "Delete (n)" action. This checkbox-list pattern
+          (rather than trying to replicate OS-style ctrl/shift-click inside
+          a scrollable list) is the same one most mail/file-manager apps use
+          for exactly this kind of batch action — unambiguous with a mouse
+          OR touch, and doesn't fight the browser's own click handling. */}
       <div className="flex-shrink-0 px-4 pt-3 pb-2 flex items-center justify-between border-b border-ink/10">
         <span className="font-mono text-[10px] tracking-[0.15em] uppercase text-ink/50">Conversations</span>
-        <button
-          onClick={onNewSession}
-          disabled={creatingSession || !isIdle}
-          title="New conversation"
-          className="flex items-center gap-0.5 font-mono text-[10px] tracking-wider uppercase text-muted hover:text-red transition-colors disabled:opacity-30"
-        >
-          <Plus size={9} />
-          {creatingSession ? 'Creating…' : 'New'}
-        </button>
+        <div className="flex items-center gap-2">
+          {selectMode ? (
+            <>
+              {selectedIds.size > 0 && (
+                <button
+                  onClick={deleteSelected}
+                  title="Delete selected"
+                  className="flex items-center gap-0.5 font-mono text-[10px] tracking-wider uppercase text-red hover:text-red/70 transition-colors"
+                >
+                  <Trash2 size={9} />
+                  Delete ({selectedIds.size})
+                </button>
+              )}
+              <button
+                onClick={toggleSelectMode}
+                className="font-mono text-[10px] tracking-wider uppercase text-muted hover:text-ink transition-colors"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={toggleSelectMode}
+                title="Select conversations to delete"
+                className="font-mono text-[10px] tracking-wider uppercase text-muted hover:text-red transition-colors"
+              >
+                Select
+              </button>
+              <button
+                onClick={onNewSession}
+                disabled={creatingSession || !isIdle}
+                title="New conversation"
+                className="flex items-center gap-0.5 font-mono text-[10px] tracking-wider uppercase text-muted hover:text-red transition-colors disabled:opacity-30"
+              >
+                <Plus size={9} />
+                {creatingSession ? 'Creating…' : 'New'}
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Scrollable body — sessions list + token usage */}
@@ -989,6 +1082,7 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
                     onSwitch={onSwitchSession}
                     onRename={onRenameSession}
                     onPin={onPinSession}
+                    onDelete={deleteOne}
                     sessionFiles={s.id === activeSessionId ? sessionFiles : []}
                     fetching={s.id === activeSessionId ? fetching : false}
                     fetched={s.id === activeSessionId ? fetched : false}
@@ -1000,6 +1094,9 @@ function Sidebar({ isIdle, agentStatus, hasMessages, lastTurnUsage, activeSessio
                     pbipError={s.id === activeSessionId ? pbipError : null}
                     onRegenerateFiles={onRegenerateFiles}
                     isIdle={isIdle}
+                    selectMode={selectMode}
+                    selected={selectedIds.has(s.id)}
+                    onToggleSelect={toggleSelected}
                   />
                 ))}
               </ul>
@@ -1293,6 +1390,28 @@ export default function ChatInterface() {
       body:    JSON.stringify({ sessionId: id, pinned: nextPinned }),
     }).catch(() => {})
   }, [sessions])
+
+  // Permanently deletes one or more conversations (see /api/session-delete
+  // — a real deletion on Anthropic's platform, not just hiding it locally).
+  // If the currently-open conversation is among the ones deleted, switches
+  // to whatever's left rather than leaving the UI pointed at a conversation
+  // that no longer exists.
+  const deleteSessions = useCallback(async (ids) => {
+    const idSet = new Set(ids)
+    try {
+      await fetch('/api/session-delete', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ sessionIds: ids }),
+      })
+    } catch {}
+    const remaining = sessions.filter(s => !idSet.has(s.id))
+    setSessions(remaining)
+    if (idSet.has(activeSessionIdRef.current)) {
+      const next = remaining[0]?.id ?? DEFAULT_SESSION_ID
+      switchSession(next)
+    }
+  }, [sessions, switchSession])
 
   const fetchSessionFiles = useCallback(async () => {
     setFetching(true)
@@ -1658,6 +1777,7 @@ export default function ChatInterface() {
         sessions={sessions}
         onSwitchSession={switchSession}
         onNewSession={createNewSession}
+        onDeleteSessions={deleteSessions}
         creatingSession={creatingSession}
         onPreviewFile={setPreviewFile}
         previewFileName={previewFile?.name}
