@@ -64,8 +64,6 @@ Reopen `MyReport.pbip` → pages appear.
 - [ ] Field bindings resolve — no "Can't load visual" if the stub data columns match
 - [ ] Pareto combo chart (if present) renders with both bar and line series
 - [ ] Walk `pbi-skills/line-column-combo-chart/SKILL.md` → Validation section
-- [ ] Walk `pbi-skills/time-window-highlight/SKILL.md` → Validation section (skill warns
-      about missing TMDL objects — this is expected; see Open work #1 below)
 
 ---
 
@@ -127,16 +125,6 @@ instead of hand-guessed schema versions. What changed:
   `measures[1]`=Y, `measures[2]`=Size). This was real breakage in the existing retail example,
   not hypothetical — now fixed with a dedicated `scatterChart` branch + a regression test
   (`test_scatter_uses_x_y_size_roles_not_category_y_fallback`) and a Gate 1b assertion test.
-- **Found, not yet fixed: `time-window-highlight` only half-renders.** This skill's template
-  set produces *two* `.visual.json` outputs (the line chart + a disconnected-slicer). But
-  `pbip_builder.py`'s `run()` only takes `built_visuals[0]` per IR visual entry — the second
-  visual (the slicer) is silently discarded. Confirmed by filling the skill directly and
-  inspecting `_skill_outputs`'s return value: 2 visuals produced, only 1 ever reaches disk. Not
-  caught by Gate 1b because a single valid `lineChart` visual with no slicer is still
-  schema-valid — it's a completeness bug, not a validation-shaped one. This overlaps with open
-  item #2 below (the skill only really works once semantic-model TMDL merge exists, since the
-  slicer needs its own disconnected table) — fixing both together is probably the efficient
-  order.
 - **Dead code removed:** `agents/requirements.py`, `agents/semantic_model.py` (pre-pivot,
   unreferenced by `conductor.py`), `schemas/requirements.json`, `docs/AGENT_CONTRACT.md`
   (byte-identical stale duplicate of `../contracts/AGENT_CONTRACT.md`), and `templates/`
@@ -149,24 +137,21 @@ instead of hand-guessed schema versions. What changed:
 
 ## Open work (in priority order)
 
-1. **`time-window-highlight` only half-renders (multi-visual skill output dropped).** See
-   above — `pbip_builder.py::run()` only writes `built_visuals[0]` per IR visual entry, so
-   this skill's slicer never reaches disk. Probably fix together with item 3 below (TMDL
-   merge), since the slicer's disconnected table depends on that merge existing anyway.
-2. **More skills.** Only two exist (`line-column-combo-chart`, `time-window-highlight`; scatter
-   was a fallback bug, now fixed — see above). Add donut, ranked-table, KPI card. Use
-   `powerbi-report-author catalog describe <type>` / `formatting describe-object` for exact
-   roles/properties instead of hand-copying from memory. New skills drop into `pbi-skills/` and
-   are referenceable by name with no builder change.
-3. **Skill → semantic-model merge.** A skill emits its report visual but its TMDL fragment
-   (new measures table / disconnected slicer table) is **not** applied — it just warns
-   (`_skill_needs_model_objects` in `agents/pbip_builder.py`). Needed for
-   `time-window-highlight`. Plan: token-fill + merge the skill's `.tmdl` into the project's
-   SemanticModel, deduped against existing objects — use `semantic-model-authoring`'s TMDL
-   guidelines (installed in this session as the `powerbi-authoring:*` skills).
-4. **More golden pages.** `examples/retail/` encodes pages 1–2; pages 3–4 follow the same
+1. **More skills.** Only one exists (`line-column-combo-chart`; `time-window-highlight` was a
+   test skill, removed 2026-07-09; scatter was a fallback bug, now fixed — see above). Add
+   donut, ranked-table, KPI card. Use `powerbi-report-author catalog describe <type>` /
+   `formatting describe-object` for exact roles/properties instead of hand-copying from memory.
+   New skills drop into `pbi-skills/` and are referenceable by name with no builder change.
+2. **Skill → semantic-model merge.** A skill can ship a TMDL fragment (e.g. a new measures
+   table) that isn't applied — it just warns (`_skill_needs_model_objects` in
+   `agents/pbip_builder.py`). No current skill needs this (the general measures-table merge is
+   now handled directly, see `lib/tmdl_measures.py`), but the gap remains for any future
+   multi-output skill. Plan if revisited: token-fill + merge the skill's `.tmdl` into the
+   project's SemanticModel, deduped against existing objects — use
+   `semantic-model-authoring`'s TMDL guidelines (installed as the `powerbi-authoring:*` skills).
+3. **More golden pages.** `examples/retail/` encodes pages 1–2; pages 3–4 follow the same
    pattern if you want a fuller regression fixture.
-5. **Desktop-bridge automation (optional, low priority).** `powerbi-desktop reload`/`screenshot`
+4. **Desktop-bridge automation (optional, low priority).** `powerbi-desktop reload`/`screenshot`
    could script Gate 2 on the existing Windows machine instead of doing it by hand. Still
    Windows-only (named-pipe bridge to Desktop) — doesn't change with the official CLI. Not
    started.

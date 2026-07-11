@@ -34,7 +34,6 @@ def registry():
 
 def test_loads_known_skills(registry):
     assert "line-column-combo-chart" in registry
-    assert "time-window-highlight" in registry
 
 
 def test_resolve_explicit_skill(registry):
