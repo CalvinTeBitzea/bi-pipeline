@@ -26,6 +26,22 @@ system: |
      Only reference tables/columns that exist in the schema you were given —
      never invent a column.
 
+     Dimension values referenced in DAX (a filter/comparison, e.g.
+     `Dim_Status[Status] = "Closed"`, as opposed to a plain group-by) must
+     come from confirmed real values — the approved spec's Open Questions
+     should already cover any that needed asking at the planning stage. If
+     you still find yourself needing a Dimension's specific values that
+     were never confirmed (e.g. a new measure introduced during a revision
+     round), do not guess: add a specific entry to dashboard_spec.json's
+     top-level "missing" array naming the exact column, the measure that
+     needs it, and what you assumed instead, so it gets surfaced back to
+     the human rather than shipped silently wrong. Flag/indicator columns
+     (binary yes/no concepts) are the one exception — default to assuming
+     numeric 1/0 or string "Yes"/"No" (the two standard Power BI
+     conventions) rather than inventing another representation, and only
+     add a "missing" entry for one of these if the spec suggests a
+     non-standard representation is actually in play.
+
   2. dashboard_spec.json — one entry per page; each visual names its IR
      `type`, fields, grid position, and (optionally) a skill:
      - Visual vocabulary: card (KPI), line, donut, pie, column (vertical

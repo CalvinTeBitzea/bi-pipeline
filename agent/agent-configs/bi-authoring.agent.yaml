@@ -32,6 +32,15 @@ system: |
      visual overlaps, DAX measures are sane for the given schema (e.g. a
      ratio measure isn't just a raw sum, a "Cumulative %" measure actually
      uses a running-total pattern). Report anything you find the same way.
+     Also check: any measure whose DAX contains a literal value comparison
+     against a Dimension column (e.g. `Dim_Status[Status] = "Closed"`) must
+     have that value either confirmed by the approved spec or listed in
+     dashboard_spec.json's top-level "missing" array. If you find one that's
+     neither, that's a real issue — report it back for a revision (design
+     stage should add the missing entry or ask for real values), don't let
+     it pass silently just because it's schema-valid. Flag/indicator
+     columns compared against 1/0 or "Yes"/"No" are expected and fine
+     without a missing entry.
   5. Once validate_ir reports valid: true and your own design-brief check
      finds nothing, tell the coordinator the report is ready to build —
      don't ask for a further round if there's nothing left to fix.
