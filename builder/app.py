@@ -134,7 +134,18 @@ def build():
             # SemanticModel tables directly, since they already have real
             # data connections — a brand new, dedicated table is the one
             # thing that's always safe to just add).
-            if tmdl_fragments:
+            #
+            # ALWAYS written now, even when there are zero measures — a
+            # report with zero measures is either legitimate (a slicer-only
+            # page) or a sign that something upstream silently dropped the
+            # KPIs the user actually asked for, and a missing README gave no
+            # way to tell those two cases apart. Previously this block was
+            # skipped entirely whenever tmdl_fragments was empty, which is
+            # exactly what happens when semantic_model.json's measures list
+            # comes back empty — the zip shipped with no README, no
+            # measures, and no indication anything was wrong.
+            measures = model.get("measures", [])
+            if measures:
                 readme_lines = [
                     "This report's pages/visuals are ready to use as-is — copy",
                     "everything under pages/ into <YourReport>.Report/definition/pages/.",
@@ -161,7 +172,21 @@ def build():
                     "the report structure is correct, it's just missing the measure",
                     "definitions those visuals point to.",
                 ]
-                zf.writestr("README.txt", "\n".join(readme_lines))
+            else:
+                readme_lines = [
+                    "This report's pages/visuals are ready to use as-is — copy",
+                    "everything under pages/ into <YourReport>.Report/definition/pages/.",
+                    "",
+                    "⚠ No measures were generated for this report.",
+                    "",
+                    "If you expected KPIs (e.g. \"Net Revenue\", \"High-Severity Rate\"), this",
+                    "likely means a Dimension value or other open question never got",
+                    "answered upstream and the measure(s) were dropped rather than built.",
+                    "Check dashboard_spec.json's \"missing\" array and review the chat",
+                    "conversation for any unanswered questions before treating this as a",
+                    "correct, measure-free report.",
+                ]
+            zf.writestr("README.txt", "\n".join(readme_lines))
         zip_bytes = buf.getvalue()
 
         # Clean up the temporary build artifacts on this server now that

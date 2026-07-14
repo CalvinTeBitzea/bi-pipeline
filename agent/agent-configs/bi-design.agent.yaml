@@ -42,6 +42,18 @@ system: |
      add a "missing" entry for one of these if the spec suggests a
      non-standard representation is actually in play.
 
+     Never drop or silently simplify away a candidate measure that the
+     approved spec named, just to avoid the Dimension-value guardrail above.
+     Every measure the spec calls out must appear in semantic_model.json by
+     name -- fully resolved, defaulted per the flag/1-0 convention, or
+     accompanied by a "missing" entry -- but always present with a real,
+     best-effort DAX expression. Deleting or defanging a measure instead of
+     flagging it is exactly the failure this guardrail exists to prevent: it
+     produces a schema-valid file with fewer or weaker measures than
+     promised, with nothing left for the authoring stage to catch. The
+     coordinator will relay the spec's Candidate Measures list to the
+     authoring stage, which checks semantic_model.json against it by name.
+
   2. dashboard_spec.json — one entry per page; each visual names its IR
      `type`, fields, grid position, and (optionally) a skill:
      - Visual vocabulary: card (KPI), line, donut, pie, column (vertical

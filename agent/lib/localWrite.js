@@ -189,7 +189,13 @@ async function writeMeasuresTable(tablesDirHandle, measuresTable) {
   const existingText = await readFileIfExists(tablesDirHandle, fileName)
 
   if (existingText == null) {
-    if (!createContent) return { created: false, added: [], skipped: [] }
+    // No file yet AND nothing to create means the build produced zero
+    // measures — genuinely possible (a slicer-only page) but also exactly
+    // what happens if measures got silently dropped upstream. Report it
+    // explicitly (`empty: true`) rather than returning an indistinguishable
+    // "nothing happened" result, so the UI can surface it instead of
+    // showing nothing at all.
+    if (!createContent) return { created: false, added: [], skipped: [], empty: true }
     await writeFileAtPath(tablesDirHandle, fileName, createContent)
     return { created: true, added: measures.map(m => m.name), skipped: [] }
   }
@@ -277,15 +283,23 @@ export async function applyManifest(rootHandle, manifest) {
 
   let measuresTableResult = null
   let modelRefResult = null
+  // Always attempt this when the manifest carries a measuresTable at all
+  // (it always does — see builder/app.py's build_manifest) rather than only
+  // when it looks non-empty, so a genuinely empty result is still reported
+  // instead of silently skipped (see writeMeasuresTable's `empty` flag).
   const measuresTable = manifest.measuresTable
-  if (measuresTable && (measuresTable.measures?.length || measuresTable.createContent)) {
+  if (measuresTable) {
     if (!modelDir) {
       measuresTableResult = { created: false, added: [], skipped: [], notFound: true }
     } else {
       const modelDefinitionDir = await modelDir.handle.getDirectoryHandle('definition', { create: true })
       const tablesDirHandle = await modelDefinitionDir.getDirectoryHandle('tables', { create: true })
       measuresTableResult = await writeMeasuresTable(tablesDirHandle, measuresTable)
-      if (manifest.modelRefLine) {
+      // Only register the ref line if a _Measures table actually exists (or
+      // was just created) — registering "ref table _Measures" in model.tmdl
+      // when the `empty` bailout above means no such file was ever written
+      // would point Desktop at a table that doesn't exist.
+      if (manifest.modelRefLine && !measuresTableResult.empty) {
         modelRefResult = await ensureModelRef(modelDefinitionDir, manifest.modelRefLine)
       }
     }

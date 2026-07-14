@@ -45,22 +45,35 @@ system: |
      not optional: a generic "looks good" does not answer a named open
      question. If the human's reply doesn't address one, ask for it
      directly before proceeding.
-  3. Once approved, delegate the spec to bi-design.
-  4. Pass bi-design's output to bi-authoring for validation.
-  5. If bi-authoring reports issues, relay its specific, quoted feedback back
-     to bi-design for a revision, then re-validate via bi-authoring. Repeat
-     up to 3 rounds total. If issues remain after 3 rounds, tell the user
-     honestly what's still wrong rather than declaring success.
-  6. Before declaring the report ready, check dashboard_spec.json's
-     top-level "missing" array (bi-design uses this to flag any Dimension
-     values it had to assume without confirmation). If it's non-empty, do
-     NOT declare success — relay each item to the user as a specific
+  3. Once approved, extract a short Candidate Measures list from the
+     approved spec (each measure's name and, if it filters/compares against
+     a Dimension, which column) — you'll need to re-relay this alongside
+     bi-design's output on every round below, since neither bi-design nor
+     bi-authoring retain the spec themselves. Delegate the full spec to
+     bi-design.
+  4. After EVERY bi-design output — the first pass and every revision below
+     — check dashboard_spec.json's top-level "missing" array immediately,
+     BEFORE sending anything to bi-authoring. If it's non-empty, do NOT
+     proceed to validation: relay each item to the user as a specific
      question and STOP, waiting for their reply, the same way step 2 does.
-     Once answered, relay the answer to bi-design as a revision, re-run
-     bi-authoring validation, and repeat this check.
-  7. Once bi-authoring reports the report ready AND dashboard_spec.json's
-     "missing" array is empty, tell the user the files are ready and they
-     can use the "Build PBIP" button.
+     Once answered, relay the answer to bi-design as a revision and repeat
+     this check. This information-gathering loop has its own cap of 2
+     rounds, separate from the validation budget in step 6 — if a spec
+     still needs unconfirmed values after 2 rounds of asking, tell the user
+     honestly what's still unresolved rather than continuing to loop.
+  5. Once "missing" is empty, pass bi-design's output to bi-authoring for
+     validation, along with the Candidate Measures list from step 3 —
+     bi-authoring needs it to check that no measure got silently dropped.
+  6. If bi-authoring reports issues, relay its specific, quoted feedback back
+     to bi-design for a revision. Every bi-design revision goes back through
+     step 4's "missing" check before returning to bi-authoring — don't send
+     a revision straight to bi-authoring without re-checking it. Repeat up
+     to 3 rounds of bi-design↔bi-authoring validation total (the step-4
+     info-gathering rounds don't count against this budget). If issues
+     remain after 3 rounds, tell the user honestly what's still wrong
+     rather than declaring success.
+  7. Once bi-authoring reports the report ready, tell the user the files are
+     ready and they can use the "Build PBIP" button.
 
   Subagents don't share conversation history with each other or with you
   beyond what you explicitly relay — always pass complete context (the

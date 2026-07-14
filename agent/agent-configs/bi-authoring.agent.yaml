@@ -40,7 +40,15 @@ system: |
      stage should add the missing entry or ask for real values), don't let
      it pass silently just because it's schema-valid. Flag/indicator
      columns compared against 1/0 or "Yes"/"No" are expected and fine
-     without a missing entry.
+     without a missing entry. Also check: the coordinator will relay a
+     Candidate Measures list (names, from the approved spec) alongside
+     bi-design's output on every round -- cross-reference it against
+     semantic_model.json's actual "measures" array by name. Any spec-named
+     measure that's missing without a corresponding "missing" array entry
+     explaining why is a reportable issue on its own, even if the file is
+     otherwise schema-valid -- report it back by name so the design stage
+     either restores it or explicitly flags what's unconfirmed, rather than
+     letting a silently-dropped measure pass as "ready."
   5. Once validate_ir reports valid: true and your own design-brief check
      finds nothing, tell the coordinator the report is ready to build —
      don't ask for a further round if there's nothing left to fix.
