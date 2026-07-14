@@ -62,7 +62,7 @@ async function readUploadedFile(file) {
 // this component's only job is to display it and report back every keystroke
 // or file drop — so ChatInterface.jsx can, for instance, bundle this data
 // into the very first message sent to the agent when the user hits send.
-export default function SetupPanels({ schema, onSchemaChange, context, onContextChange, files, onFilesChange }) {
+export default function SetupPanels({ schema, onSchemaChange, context, onContextChange, sampleRows, onSampleRowsChange, files, onFilesChange }) {
   const wrapRef      = useRef(null)
   const fileInputRef = useRef(null)
   const [dragging, setDragging] = useState(false)
@@ -110,6 +110,28 @@ export default function SetupPanels({ schema, onSchemaChange, context, onContext
           onChange={(e) => onSchemaChange(e.target.value)}
           placeholder={"fact_orders (order_id, date, customer_id, product_id, qty, price)\ndim_customers (customer_id, name, segment)\n\nfact_orders.customer_id → dim_customers.customer_id"}
           className="w-full min-h-[96px] font-mono text-[12px] leading-relaxed text-ink bg-offwhite/50 outline-none resize-none px-3 py-2.5 placeholder:text-muted/75"
+          spellCheck={false}
+        />
+      </div>
+
+      {/* Sample Rows — optional real example rows for the columns the
+          planning agent will need to filter/compare on (e.g. a Status
+          column's actual values). Purely additive: nothing here is
+          required, but giving real values upfront lets the planning agent
+          skip asking a follow-up question for any column these rows
+          already cover, instead of guessing or blocking on a question. */}
+      <div className="border border-ink/15 rounded-lg overflow-hidden">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-surface/50 border-b border-ink/10">
+          <span className="font-mono text-[9px] tracking-[0.15em] uppercase text-muted">Sample Rows (optional)</span>
+          {sampleRows.length > 0 && (
+            <span className="font-mono text-[9px] text-muted">~{Math.round(sampleRows.length / 4).toLocaleString()} tok</span>
+          )}
+        </div>
+        <textarea
+          value={sampleRows}
+          onChange={(e) => onSampleRowsChange(e.target.value)}
+          placeholder={"2-3 real rows per table help the agent avoid guessing at\ncategory/status values, e.g.:\n\norder_id, date, customer_id, status\n1001, 2026-06-01, 42, Closed\n1002, 2026-06-03, 17, Open"}
+          className="w-full min-h-[72px] font-mono text-[12px] leading-relaxed text-ink bg-offwhite/50 outline-none resize-none px-3 py-2.5 placeholder:text-muted/75"
           spellCheck={false}
         />
       </div>

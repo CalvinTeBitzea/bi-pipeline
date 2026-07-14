@@ -791,7 +791,9 @@ function SessionItem({
                     <p>✓ Wrote {applyResult.pagesWritten} page file(s) to {applyResult.reportFolderName}</p>
                     {applyResult.measuresTableResult && (
                       <p>
-                        {applyResult.measuresTableResult.notFound
+                        {applyResult.measuresTableResult.empty
+                          ? `⚠ No measures were generated for this report — check the conversation for unanswered questions`
+                          : applyResult.measuresTableResult.notFound
                           ? `⚠ ${applyResult.modelFolderName ? '' : 'No .SemanticModel folder found — '}couldn't add ${applyResult.measuresTableName} (see Download zip to add it by hand)`
                           : applyResult.measuresTableResult.created
                           ? `✓ Created ${applyResult.measuresTableName} with ${applyResult.measuresTableResult.added.length} measure(s)`
@@ -1309,6 +1311,7 @@ export default function ChatInterface() {
   const [thinkHint, setThinkHint]     = useState('thinking')
   const [schema, setSchema]               = useState('')
   const [context, setContext]             = useState('')
+  const [sampleRows, setSampleRows]       = useState('')
   const [attachedFiles, setAttachedFiles] = useState([])
   const [historyLoading, setHistoryLoading] = useState(true)
   const [lastTurnUsage, setLastTurnUsage] = useState(null)
@@ -1912,11 +1915,12 @@ export default function ChatInterface() {
 
   // Handles the send button / Enter key. The FIRST message of a brand new
   // conversation is built differently from every later one: it stitches
-  // together the schema textarea, the business-context textarea, any
-  // attached files, and whatever's typed in the main input box into ONE
-  // long, clearly-labeled block of text (see the "## DATA MODEL SCHEMA" /
-  // "## BUSINESS CONTEXT" headers below) — this is the exact shape
-  // bi-planner's job description (bi-planner.agent.yaml) expects to receive
+  // together the schema textarea, optional sample data rows, the
+  // business-context textarea, any attached files, and whatever's typed in
+  // the main input box into ONE long, clearly-labeled block of text (see
+  // the "## DATA MODEL SCHEMA" / "## SAMPLE DATA ROWS" / "## BUSINESS
+  // CONTEXT" headers below) — this is the exact shape bi-planner's job
+  // description (bi-planner.agent.yaml) expects to receive
   // as its very first input. Every message after that is just sent as
   // plain, unstructured text, the same as any normal chat turn.
   const sendMessage = useCallback(async () => {
@@ -1926,12 +1930,14 @@ export default function ChatInterface() {
     let text
 
     if (isSetup) {
-      const hasAny = schema.trim() || context.trim() || attachedFiles.length > 0 || input.trim()
+      const hasAny = schema.trim() || context.trim() || sampleRows.trim() || attachedFiles.length > 0 || input.trim()
       if (!hasAny) return
 
       const parts = ["I'm providing my data model and business context for dashboard planning.\n"]
       if (schema.trim())
         parts.push(`## DATA MODEL SCHEMA\n\`\`\`\n${schema.trim()}\n\`\`\``)
+      if (sampleRows.trim())
+        parts.push(`## SAMPLE DATA ROWS\n\`\`\`\n${sampleRows.trim()}\n\`\`\``)
       if (context.trim())
         parts.push(`## BUSINESS CONTEXT\n${context.trim()}`)
       for (const f of attachedFiles) {
@@ -1950,9 +1956,9 @@ export default function ChatInterface() {
 
     setInput('')
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
-    if (isSetup) { setSchema(''); setContext(''); setAttachedFiles([]) }
+    if (isSetup) { setSchema(''); setContext(''); setSampleRows(''); setAttachedFiles([]) }
     await dispatchToAgent(text)
-  }, [input, agentStatus, schema, context, attachedFiles, messages, dispatchToAgent])
+  }, [input, agentStatus, schema, context, sampleRows, attachedFiles, messages, dispatchToAgent])
 
   // The "Generate missing files →" recovery action shown when a conversation
   // ended without producing dashboard_spec.json/semantic_model.json (e.g.
@@ -2058,6 +2064,8 @@ export default function ChatInterface() {
                   onSchemaChange={setSchema}
                   context={context}
                   onContextChange={setContext}
+                  sampleRows={sampleRows}
+                  onSampleRowsChange={setSampleRows}
                   files={attachedFiles}
                   onFilesChange={setAttachedFiles}
                 />
