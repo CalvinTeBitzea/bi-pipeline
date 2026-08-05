@@ -4,4 +4,16 @@ examples/
 artifacts/
 memories/
 .pytest_cache/
-*.md
+
+# NOTE: do NOT add `*.md` back here.
+#
+# Every visual template in pbi-skills/ is identified by its own SKILL.md —
+# lib/skills.py skips any folder that doesn't have one. Excluding *.md
+# therefore stripped SKILL.md from the deployment and left the skill registry
+# EMPTY in production: the templates still shipped, but nothing could find
+# them, so every visual that named a skill silently fell back to a plain
+# generic chart. Local and CLI builds read from disk and were unaffected,
+# which is why no test caught it.
+#
+# See tests/test_deployment_packaging.py, which reproduces the deployed file
+# set from this exact file and fails if the skill registry comes back empty.
